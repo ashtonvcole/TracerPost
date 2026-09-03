@@ -26,7 +26,7 @@ class HyperbolicConservationLaw:
         self._F = value
 
     @property
-    def F(self) -> ufl.Expr:
+    def S(self) -> ufl.Expr:
         """ufl.Expr: The scalar-valued source term."""
         return self._S
 
@@ -56,7 +56,7 @@ class ParabolicConservationLaw:
         self._F = value
 
     @property
-    def F(self) -> ufl.Expr:
+    def S(self) -> ufl.Expr:
         """ufl.Expr: The scalar-valued source term."""
         return self._S
 
