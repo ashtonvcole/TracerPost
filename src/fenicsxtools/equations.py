@@ -35,7 +35,7 @@ class HyperbolicConservationLaw:
         self._S = value
 
 class ParabolicConservationLaw:
-    """Generalized scalar hyperbolic conservation law.
+    """Generalized scalar parabolic conservation law.
 
     dU/dt + div F(U, grad U) = S(x, t, U)
 
