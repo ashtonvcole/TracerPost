@@ -6,7 +6,63 @@ General templates for conservation laws.
 import dolfinx
 import ufl
 
-class HyperbolicConservationLaw:
+class ConservationLaw:
+    """Generalized hyperbolic conservation law.
+
+    dU/dt + div F(U) = S(x, t, U)
+
+    Attributes:
+        U (ufl.Expr): The conserved quantity. This reference is important for
+            correctly constructing the solution method.
+        F (ufl.Expr): A vector-valued flux, dependent on the state U.
+        S (ufl.Expr): A scalar-valued source expression, dependent on the
+            position x, time t, and state U.
+    """
+
+    def __init__(self, U: ufl.Function, F: ufl.Expr, S: ufl.Expr = None):
+        """Constructor.
+
+        Arguments:
+            U (ufl.Function): The conserved quantity. This reference is
+                important for correctly constructing the solution method.
+            F (ufl.Expr): A vector-valued hyperbolic flux, dependent on the
+                state U.
+            S (ufl.Expr, optional): A scalar-valued source expression, dependent
+                on the position x, time t, and state U. Default is None, which
+                results in no forcing.
+        """
+        self.U = U
+        self.F = F
+        self.S = S
+
+        @property
+        def U(self) -> ufl.expr:
+            """ufl.Expr: The scalar-valued conserved variable."""
+            return self._U
+
+        @U.setter
+        def U(self, value: ufl.Expr):
+            self._U = value
+
+        @property
+        def F(self) -> ufl.Expr:
+            """ufl.Expr: The vector-valued hyperbolic flux."""
+            return self._F
+
+        @F.setter
+        def F(self, value: ufl.Expr):
+            self._F = value
+
+        @property
+        def S(self) -> ufl.Expr:
+            """ufl.Expr: The scalar-valued source term."""
+            return self._S
+
+        @S.setter
+        def S(self, value: ufl.Expr):
+            self._S = value
+
+class HyperbolicConservationLaw(ConservationLaw):
     """Generalized scalar hyperbolic conservation law.
 
     dU/dt + div F(U) = S(x, t, U)
@@ -31,8 +87,7 @@ class HyperbolicConservationLaw:
                 on the position x, time t, and state U. Default is None, which
                 results in no forcing.
         """
-        self.F = F
-        self.S = S
+        super().__init__(U, F, S)
 
     @property
     def U(self) -> ufl.expr:
@@ -61,7 +116,7 @@ class HyperbolicConservationLaw:
     def S(self, value: ufl.Expr):
         self._S = value
 
-class ParabolicConservationLaw:
+class ParabolicConservationLaw(ConservationLaw):
     """Generalized scalar parabolic conservation law.
 
     dU/dt + div F(U, grad U) = S(x, t, U)
@@ -96,13 +151,11 @@ class ParabolicConservationLaw:
                 on the position x, time t, and state U. Default is None, which
                 results in no forcing.
         """
-        self.U = U
-        self.F = F
+        super.__init__(U, F, S)
         if grad_of is not None:
             self.grad_of = grad_of
         else:
             self.grad_of = U
-        self.S = S
 
     @property
     def U(self) -> ufl.expr:
@@ -141,7 +194,7 @@ class ParabolicConservationLaw:
         self._grad_of = value
 
 def get_advection(domain: dolfinx.mesh.Mesh,
-    U: ufl.Function, v: Union[real, tuple]) -> HyperbolicConservationLaw:
+    U: ufl.Function, v: float | tuple) -> HyperbolicConservationLaw:
     """Get constant- and homogeneous-coefficient scalar advection problem.
 
     dU/dt + div(U v) = 0
@@ -162,7 +215,7 @@ def get_advection(domain: dolfinx.mesh.Mesh,
     )
 
 def get_advection_diffusion(domain: dolfinx.mesh.Mesh, U: ufl.Function,
-    v: Union[real, tuple], d: real) -> ParabolicConservationLaw:
+    v: float | tuple, d: float) -> ParabolicConservationLaw:
     """Get a constant- and homogeneneous-coefficient scalar advection-diffusion
     problem.
 
