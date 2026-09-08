@@ -35,32 +35,32 @@ class ConservationLaw:
         self.F = F
         self.S = S
 
-        @property
-        def U(self) -> ufl.expr:
-            """ufl.Expr: The scalar-valued conserved variable."""
-            return self._U
+    @property
+    def U(self) -> ufl.expr:
+        """ufl.Expr: The scalar-valued conserved variable."""
+        return self._U
 
-        @U.setter
-        def U(self, value: ufl.Expr):
-            self._U = value
+    @U.setter
+    def U(self, value: ufl.Expr):
+        self._U = value
 
-        @property
-        def F(self) -> ufl.Expr:
-            """ufl.Expr: The vector-valued hyperbolic flux."""
-            return self._F
+    @property
+    def F(self) -> ufl.Expr:
+        """ufl.Expr: The vector-valued hyperbolic flux."""
+        return self._F
 
-        @F.setter
-        def F(self, value: ufl.Expr):
-            self._F = value
+    @F.setter
+    def F(self, value: ufl.Expr):
+        self._F = value
 
-        @property
-        def S(self) -> ufl.Expr:
-            """ufl.Expr: The scalar-valued source term."""
-            return self._S
+    @property
+    def S(self) -> ufl.Expr:
+        """ufl.Expr: The scalar-valued source term."""
+        return self._S
 
-        @S.setter
-        def S(self, value: ufl.Expr):
-            self._S = value
+    @S.setter
+    def S(self, value: ufl.Expr):
+        self._S = value
 
 class HyperbolicConservationLaw(ConservationLaw):
     """Generalized scalar hyperbolic conservation law.
