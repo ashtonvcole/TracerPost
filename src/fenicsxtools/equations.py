@@ -151,7 +151,7 @@ class ParabolicConservationLaw(ConservationLaw):
                 on the position x, time t, and state U. Default is None, which
                 results in no forcing.
         """
-        super.__init__(U, F, S)
+        super().__init__(U, F, S)
         if grad_of is not None:
             self.grad_of = grad_of
         else:
