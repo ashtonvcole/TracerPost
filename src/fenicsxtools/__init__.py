@@ -1,3 +1,3 @@
-from . import equations, fluxes
+from . import equations, fluxes, formulations
 
-__all__ = ['equations', 'fluxes']
+__all__ = ['equations', 'fluxes', 'formulations']

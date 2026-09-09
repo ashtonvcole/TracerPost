@@ -3,10 +3,11 @@
 Functions for computing numerical fluxes at element interfaces.
 """
 
+import dolfinx
 import ufl
 
-def fluxn_upwind_scalar(F: ufl.Expr, J: ufl.Expr,
-    n: ufl.FacetNormal) -> ufl.Restricted:
+def fluxn_upwind_scalar(F: ufl.core.expr.Expr, U: dolfinx.fem.Function,
+    J: ufl.core.expr.Expr, n: ufl.FacetNormal) -> ufl.core.operator.Operator:
     """Upwind flux trace.
 
     The value of the flux trace at an interior element interface is chosen to be
@@ -15,12 +16,13 @@ def fluxn_upwind_scalar(F: ufl.Expr, J: ufl.Expr,
     vice, versa. If the characteristics disagree, then an average is used.
 
     Args:
-        F (ufl.Expr): The unrestricted, vector-valued flux expression.
-        J (ufl.Expr): The unrestricted, vector-valued flux Jacobian.
+        F (ufl.core.expr.Expr): The unrestricted, vector-valued flux expression.
+        U (dolfinx.fem.Function): The unrestricted, scalar-valued state.
+        J (ufl.core.expr.Expr): The unrestricted, vector-valued flux Jacobian.
         n (ufl.FacetNormal): The unrestricted normal for element faces.
 
     Returns:
-        ufl.Expr: The upwind flux trace.
+        ufl.core.expr.Expr: The upwind flux trace.
     """
 
     # Project J from + and - onto outward normal of + to get speeds
@@ -30,8 +32,14 @@ def fluxn_upwind_scalar(F: ufl.Expr, J: ufl.Expr,
 
     # Determine whether the wave is definitively entering or leaving +
     # Again, positive means that the signal travels from + to - for both
-    leaving_plus = ufl.and_condition(J_plus_n_plus > 0.0, J_minus_n_plus > 0.0)
-    entering_plus = ufl.and_condition(J_plus_n_plus < 0.0, J_minus_n_plus < 0.0)
+    leaving_plus = ufl.And(
+        ufl.gt(J_plus_n_plus, 0.0),
+        ufl.gt(J_minus_n_plus, 0.0)
+    )
+    entering_plus = ufl.And(
+        ufl.lt(J_plus_n_plus, 0.0),
+        ufl.lt(J_minus_n_plus, 0.0)
+    )
 
     # Return the projected upwind flux from the appropriate source element
     return ufl.dot(ufl.conditional(
@@ -44,8 +52,8 @@ def fluxn_upwind_scalar(F: ufl.Expr, J: ufl.Expr,
         )
     ), n('+'))
 
-def fluxn_downwind_scalar(F: ufl.Expr, J: ufl.Expr,
-    n: ufl.FacetNormal) -> ufl.Restricted:
+def fluxn_downwind_scalar(F: ufl.core.expr.Expr, U: dolfinx.fem.Function,
+    J: ufl.core.expr.Expr, n: ufl.FacetNormal) -> ufl.core.operator.Operator:
     """Downwind flux trace.
 
     The value of the flux trace at an interior element interface is chosen to be
@@ -58,12 +66,13 @@ def fluxn_downwind_scalar(F: ufl.Expr, J: ufl.Expr,
         has utility for the auxiliary equation of Local Discontinuous Galerkin.
 
     Args:
-        F (ufl.Expr): The unrestricted, vector-valued flux expression.
-        J (ufl.Expr): The unrestricted, vector-valued flux Jacobian.
+        F (ufl.core.expr.Expr): The unrestricted, vector-valued flux expression.
+        U (dolfinx.fem.Function): The unrestricted, scalar-valued state.
+        J (ufl.core.expr.Expr): The unrestricted, vector-valued flux Jacobian.
         n (ufl.FacetNormal): The unrestricted normal for element faces.
 
     Returns:
-        ufl.Expr: The downwind flux trace.
+        ufl.core.expr.Expr: The downwind flux trace.
     """
 
     # Project J from + and - onto outward normal of + to get speeds
@@ -73,8 +82,14 @@ def fluxn_downwind_scalar(F: ufl.Expr, J: ufl.Expr,
 
     # Determine whether the wave is definitively entering or leaving +
     # Again, positive means that the signal travels from + to - for both
-    leaving_plus = ufl.and_condition(J_plus_n_plus > 0.0, J_minus_n_plus > 0.0)
-    entering_plus = ufl.and_condition(J_plus_n_plus < 0.0, J_minus_n_plus < 0.0)
+    leaving_plus = ufl.And(
+        ufl.gt(J_plus_n_plus, 0.0),
+        ufl.gt(J_minus_n_plus, 0.0)
+    )
+    entering_plus = ufl.And(
+        ufl.lt(J_plus_n_plus, 0.0),
+        ufl.lt(J_minus_n_plus, 0.0)
+    )
 
     # Return the projected upwind flux from the appropriate source element
     return ufl.dot(ufl.conditional(
@@ -87,8 +102,8 @@ def fluxn_downwind_scalar(F: ufl.Expr, J: ufl.Expr,
         )
     ), n('+'))
 
-def fluxn_llf_scalar(F: ufl.Expr, J: ufl.Expr, U:ufl.Expr,
-    n: ufl.FacetNormal) -> ufl.Restricted:
+def fluxn_llf_scalar(F: ufl.core.expr.Expr, U: dolfinx.fem.Function,
+    J: ufl.core.expr.Expr, n: ufl.FacetNormal) -> ufl.core.operator.Operator:
     """Local Lax-Friedrichs/Rusanov flux trace.
 
     The value of the flux trace at an interior element interface is chosen to be
@@ -104,13 +119,13 @@ def fluxn_llf_scalar(F: ufl.Expr, J: ufl.Expr, U:ufl.Expr,
     flows into +, diffusing the solution.
 
     Args:
-        F (ufl.Expr): The unrestricted, vector-valued flux expression.
-        J (ufl.Expr): The unrestricted, vector-valued flux Jacobian.
-        U (ufl.Expr): The unrestricted, scalar-valued state.
+        F (ufl.core.expr.Expr): The unrestricted, vector-valued flux expression.
+        U (dolfinx.fem.Function): The unrestricted, scalar-valued state.
+        J (ufl.core.expr.Expr): The unrestricted, vector-valued flux Jacobian.
         n (ufl.FacetNormal): The unrestricted normal for element faces.
 
     Returns:
-        ufl.Expr: The LLF/Rusanov flux trace.
+        ufl.core.expr.Expr: The LLF/Rusanov flux trace.
     """
     lam = ufl.max_value(
         abs(ufl.dot(J('+'), n('+'))), # Characteristic speed magnitude at +
@@ -118,8 +133,8 @@ def fluxn_llf_scalar(F: ufl.Expr, J: ufl.Expr, U:ufl.Expr,
     )
     return ufl.dot(ufl.avg(F), n('+')) - lam * ufl.jump(U)
 
-def fluxn_llf_downwind_scalar(F: ufl.Expr, J: ufl.Expr, U:ufl.Expr,
-    n: ufl.FacetNormal) -> ufl.Restricted:
+def fluxn_llf_downwind_scalar(F: ufl.core.expr.Expr, U: dolfinx.fem.Function,
+    J: ufl.core.expr.Expr, n: ufl.FacetNormal) -> ufl.core.operator.Operator:
     """Downwinded Local Lax-Friedrichs/Rusanov flux trace.
 
     The value of the flux trace at an interior element interface is chosen to be
@@ -137,13 +152,13 @@ def fluxn_llf_downwind_scalar(F: ufl.Expr, J: ufl.Expr, U:ufl.Expr,
         has utility for the auxiliary equation of Local Discontinuous Galerkin.
 
     Args:
-        F (ufl.Expr): The unrestricted, vector-valued flux expression.
-        J (ufl.Expr): The unrestricted, vector-valued flux Jacobian.
-        U (ufl.Expr): The unrestricted, scalar-valued state.
+        F (ufl.core.expr.Expr): The unrestricted, vector-valued flux expression.
+        U (dolfinx.fem.Function): The unrestricted, scalar-valued state.
+        J (ufl.core.expr.Expr): The unrestricted, vector-valued flux Jacobian.
         n (ufl.FacetNormal): The unrestricted normal for element faces.
 
     Returns:
-        ufl.Expr: The LLF/Rusanov flux trace.
+        ufl.core.expr.Expr: The LLF/Rusanov flux trace.
     """
     lam = ufl.max_value(
         abs(ufl.dot(J('+'), n('+'))), # Characteristic speed magnitude at +

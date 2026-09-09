@@ -7,215 +7,109 @@ import dolfinx
 import ufl
 
 class ConservationLaw:
-    """Generalized hyperbolic conservation law.
+    """Generalized conservation law.
 
     dU/dt + div F(U) = S(x, t, U)
 
     Attributes:
-        U (ufl.Expr): The conserved quantity. This reference is important for
-            correctly constructing the solution method.
-        F (ufl.Expr): A vector-valued flux, dependent on the state U.
-        S (ufl.Expr): A scalar-valued source expression, dependent on the
-            position x, time t, and state U.
+        U (ufl.core.expr.Expr): The conserved quantity.
+        flux (callable): The flux function F(U).
+        F (ufl.core.expr.Expr): The vector-valued flux.
+        J (ufl.core.expr.Expr): The vector-valued flux Jacobian.
+        S (ufl.core.expr.Expr): A scalar-valued source expression.
     """
 
-    def __init__(self, U: ufl.Function, F: ufl.Expr, S: ufl.Expr = None):
+    def __init__(self, U: dolfinx.fem.Function, F: ufl.core.expr.Expr,
+        S: ufl.core.expr.Expr = None):
         """Constructor.
 
         Arguments:
-            U (ufl.Function): The conserved quantity. This reference is
+            U (dolfinx.fem.Function): The conserved quantity. This reference is
                 important for correctly constructing the solution method.
-            F (ufl.Expr): A vector-valued hyperbolic flux, dependent on the
-                state U.
-            S (ufl.Expr, optional): A scalar-valued source expression, dependent
-                on the position x, time t, and state U. Default is None, which
-                results in no forcing.
+            F (ufl.core.expr.Expr): The vector-valued flux.
+            S (ufl.core.expr.Expr, optional): A scalar-valued source expression.
+                Default is None, which results in no forcing.
         """
         self.U = U
-        self.F = F
+        self.F = F # Includes computation of flux Jacobian
         self.S = S
 
     @property
-    def U(self) -> ufl.expr:
-        """ufl.Expr: The scalar-valued conserved variable."""
+    def U(self) -> ufl.core.expr.Expr:
+        """ufl.core.expr.Expr: The conserved quantity."""
         return self._U
 
     @U.setter
-    def U(self, value: ufl.Expr):
+    def U(self, value: ufl.core.expr.Expr):
         self._U = value
 
     @property
-    def F(self) -> ufl.Expr:
-        """ufl.Expr: The vector-valued hyperbolic flux."""
+    def F(self) -> ufl.core.expr.Expr:
+        """ufl.core.expr.Expr: The vector-valued flux."""
         return self._F
 
     @F.setter
-    def F(self, value: ufl.Expr):
+    def F(self, value):
         self._F = value
+        # Compute J symbolically
+        # UFL requires a Variable wrapper for differentiation
+        Uvar = ufl.variable(self._U)
+        # Nested replace-differentiate-replace
+        self._J = ufl.replace(
+            ufl.diff(
+                ufl.replace(
+                    self._F,
+                    {self._U: Uvar}
+                ),
+                Uvar),
+            {Uvar: self._U}
+        )
 
     @property
-    def S(self) -> ufl.Expr:
-        """ufl.Expr: The scalar-valued source term."""
+    def J(self) -> ufl.core.expr.Expr:
+        """ufl.core.expr.Expr: The vector-valued flux Jacobian."""
+        return self._J
+
+    @property
+    def S(self) -> ufl.core.expr.Expr:
+        """ufl.core.expr.Expr: A scalar-valued source expression."""
         return self._S
 
     @S.setter
-    def S(self, value: ufl.Expr):
+    def S(self, value: ufl.core.expr.Expr):
         self._S = value
 
-class HyperbolicConservationLaw(ConservationLaw):
-    """Generalized scalar hyperbolic conservation law.
-
-    dU/dt + div F(U) = S(x, t, U)
-
-    Attributes:
-        U (ufl.Expr): The conserved quantity. This reference is important for
-            correctly constructing the solution method.
-        F (ufl.Expr): A vector-valued hyperbolic flux, dependent on the state U.
-        S (ufl.Expr): A scalar-valued source expression, dependent on the
-            position x, time t, and state U.
-    """
-
-    def __init__(self, U: ufl.Function, F: ufl.Expr, S: ufl.Expr = None):
-        """Constructor.
-
-        Arguments:
-            U (ufl.Function): The conserved quantity. This reference is
-                important for correctly constructing the solution method.
-            F (ufl.Expr): A vector-valued hyperbolic flux, dependent on the
-                state U.
-            S (ufl.Expr, optional): A scalar-valued source expression, dependent
-                on the position x, time t, and state U. Default is None, which
-                results in no forcing.
-        """
-        super().__init__(U, F, S)
-
-    @property
-    def U(self) -> ufl.expr:
-        """ufl.Expr: The scalar-valued conserved variable."""
-        return self._U
-
-    @U.setter
-    def U(self, value: ufl.Expr):
-        self._U = value
-
-    @property
-    def F(self) -> ufl.Expr:
-        """ufl.Expr: The vector-valued hyperbolic flux."""
-        return self._F
-
-    @F.setter
-    def F(self, value: ufl.Expr):
-        self._F = value
-
-    @property
-    def S(self) -> ufl.Expr:
-        """ufl.Expr: The scalar-valued source term."""
-        return self._S
-
-    @S.setter
-    def S(self, value: ufl.Expr):
-        self._S = value
-
-class ParabolicConservationLaw(ConservationLaw):
-    """Generalized scalar parabolic conservation law.
-
-    dU/dt + div F(U, grad U) = S(x, t, U)
-
-    Attributes:
-        U (ufl.Function): The conserved quantity. This reference is important
-            for correctly constructing the solution method.
-        F (ufl.Expr): A vector-valued parabolic flux, dependent on the state U
-            and gradient grad U.
-        S (ufl.Expr): A scalar-valued source expression, dependent on the
-            position x, time t, and state U.
-        grad_of (ufl.Expr): The expression whose gradient is taken. This is
-            necessary for the LDG formulation. Often, this is just U. For
-            depth-averaged transoport, however, it would be U / h.
-    """
-
-    def __init__(self, U: ufl.Function, F: ufl.Expr, grad_of: ufl.Expr = None,
-        S: ufl.Expr = None):
-        """Constructor.
-
-        Arguments:
-            U (ufl.Function): The conserved quantity. This reference is
-                important for correctly constructing the solution method.
-            F (ufl.Expr): A vector-valued hyperbolic flux, dependent on the
-                state U and gradient grad U.
-            grad_of (ufl.Expr, optional): The expression whose gradient is
-                taken. This is necessary for formulations like Local
-                Discontinuous Galerkin. Often, this is just U. For
-                depth-averaged transoport, however, it would be U / h. Default
-                is U.
-            S (ufl.Expr, optional): A scalar-valued source expression, dependent
-                on the position x, time t, and state U. Default is None, which
-                results in no forcing.
-        """
-        super().__init__(U, F, S)
-        if grad_of is not None:
-            self.grad_of = grad_of
-        else:
-            self.grad_of = U
-
-    @property
-    def U(self) -> ufl.expr:
-        """ufl.Expr: The scalar-valued conserved variable."""
-        return self._U
-
-    @U.setter
-    def U(self, value: ufl.Expr):
-        self._U = value
-
-    @property
-    def F(self) -> ufl.Expr:
-        """ufl.Expr: The vector-valued parbolic flux."""
-        return self._F
-
-    @F.setter
-    def F(self, value: ufl.Expr):
-        self._F = value
-
-    @property
-    def S(self) -> ufl.Expr:
-        """ufl.Expr: The scalar-valued source term."""
-        return self._S
-
-    @S.setter
-    def S(self, value: ufl.Expr):
-        self._S = value
-
-    @property
-    def grad_of(self) -> ufl.Expr:
-        """ufl.Expr: The expression whose gradient is an auxiliary variable."""
-        return self._grad_of
-
-    @grad_of.setter
-    def grad_of(self, value: ufl.Expr):
-        self._grad_of = value
+    def __str__(self):
+        """Represent the equation as a string."""
+        U = ufl.formatting.ufl2unicode.ufl2unicode(self._U)
+        F = ufl.formatting.ufl2unicode.ufl2unicode(ufl.algorithms.ad.expand_derivatives(self._F))
+        S = ufl.formatting.ufl2unicode.ufl2unicode(ufl.algorithms.ad.expand_derivatives(self._S)) if self._S is not None else '0'
+        return f'dU/dt + div({F}) = {S}'
 
 def get_advection(domain: dolfinx.mesh.Mesh,
-    U: ufl.Function, v: float | tuple) -> HyperbolicConservationLaw:
+    U: dolfinx.fem.Function, v: float | tuple) -> ConservationLaw:
     """Get constant- and homogeneous-coefficient scalar advection problem.
 
     dU/dt + div(U v) = 0
 
     Arguments:
         domain (dolfinx.mesh.Mesh): The domain of the problem.
-        U (ufl.Function): The solution variable. This reference is important for
+        U (dolfinx.fem.Function): The solution variable. This reference is important for
             correctly constructing the solution method.
         v (Union[real, tuple]): The advection speed. Must be consistent with the
             dimension of the domain.
 
     Returns:
-        HyperbolicConservationLaw: The conservation law.
+        ConservationLaw: The conservation law.
     """
-    return HyperbolicConservationLaw(
+    vv = dolfinx.fem.Constant(domain, v)
+    return ConservationLaw(
         U=U,
-        F=U * ufl.Constant(domain, v)
+        F=U * vv
     )
 
-def get_advection_diffusion(domain: dolfinx.mesh.Mesh, U: ufl.Function,
-    v: float | tuple, d: float) -> ParabolicConservationLaw:
+def get_advection_diffusion(domain: dolfinx.mesh.Mesh, U: dolfinx.fem.Function,
+    v: float | tuple, d: float) -> ConservationLaw:
     """Get a constant- and homogeneneous-coefficient scalar advection-diffusion
     problem.
 
@@ -228,16 +122,17 @@ def get_advection_diffusion(domain: dolfinx.mesh.Mesh, U: ufl.Function,
         d (real): The isotropic diffusion rate.
 
     Returns:
-        ParabolicConservationLaw: The conservation law.
+        ConservationLaw: The conservation law.
     """
-    return ParabolicConservationLaw(
+    vv = dolfinx.fem.Constant(domain, v)
+    return ConservationLaw(
         U=U,
-        F=U * ufl.Constant(domain, v) - d * ufl.grad(U)
+        F=U * vv - d * ufl.grad(U)
     )
 
 def get_depth_averaged_advection_diffusion(domain: dolfinx.mesh.Mesh,
-    iota: ufl.Function, h: ufl.Function, v: ufl.Function,
-    D: ufl.Expr) -> ParabolicConservationLaw:
+    iota: dolfinx.fem.Function, h: dolfinx.fem.Function, v: dolfinx.fem.Function,
+    D: ufl.core.expr.Expr) -> ConservationLaw:
     """Get a depth-averaged advection diffusion problem, with potentially space-
     and time-varying, anisotropic constants.
 
@@ -245,23 +140,22 @@ def get_depth_averaged_advection_diffusion(domain: dolfinx.mesh.Mesh,
 
     Arguments:
         domain (dolfinx.mesh.Mesh): The domain of the problem.
-        iota (ufl.Function): The conserved height-scaled concentration. This
+        iota (dolfinx.fem.Function): The conserved height-scaled concentration. This
             reference is important for correctly constructing the solution
             method.
-        h (ufl.Function): The water column height function. This may be updated
+        h (dolfinx.fem.Function): The water column height function. This may be updated
             during solution to represent a time-varying quantity, but care
             must be taken to correctly update operators and residuals.
-        v (ufl.Function): The current velocity function. This may be updated
+        v (dolfinx.fem.Function): The current velocity function. This may be updated
             during solution to represent a time-varying quantity, but care
             must be taken to correctly update operators and residuals.
-        D (ufl.Expr): The diffusion tensor. This may be state-dependent.
+        D (ufl.core.expr.Expr): The diffusion tensor. This may be state-dependent.
 
     Returns:
-        ParabolicConservationLaw: The conservation law.
+        ConservationLaw: The conservation law.
     """
     c = iota / h # Concentration
-    return ParabolicConservationLaw(
+    return ConservationLaw(
         U=iota,
-        F=iota * v + ufl.inner(D, ufl.grad(c)),
-        grad_of=c
+        F=iota * v + ufl.inner(D, ufl.grad(c))
     )

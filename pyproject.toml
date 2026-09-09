@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fenicsxtools"
+version = "0.1.0"
+description = "Conservation-law solver framework built on FEniCSx/dolfinx."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies=[
+    "fenics-ufl"
+]
+
+[project.optional-dependencies]
+viz = ["pyvista", "imageio"]
+dev = ["jupyterlab", "pytest"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fenicsxtools"]
