@@ -17,4 +17,4 @@ viz = ["pyvista", "imageio"]
 dev = ["jupyterlab", "pytest"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/fenicsxtools"]
+packages = ["src/fenicsxtools", "src/adcircxtools"]
