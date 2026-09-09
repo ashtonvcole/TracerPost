@@ -136,7 +136,7 @@ def get_depth_averaged_advection_diffusion(domain: dolfinx.mesh.Mesh,
     """Get a depth-averaged advection diffusion problem, with potentially space-
     and time-varying, anisotropic constants.
 
-    diota/dt + div(iota v - D grad c = 0
+    diota/dt + div(iota v - D grad c) = 0
 
     Arguments:
         domain (dolfinx.mesh.Mesh): The domain of the problem.
@@ -157,5 +157,5 @@ def get_depth_averaged_advection_diffusion(domain: dolfinx.mesh.Mesh,
     c = iota / h # Concentration
     return ConservationLaw(
         U=iota,
-        F=iota * v + ufl.inner(D, ufl.grad(c))
+        F=iota * v - ufl.dot(D, ufl.grad(c))
     )

@@ -6,6 +6,80 @@ Functions for computing numerical fluxes at element interfaces.
 import dolfinx
 import ufl
 
+def trace_upwind(F: ufl.core.expr.Expr, U: dolfinx.fem.Function,
+    J: ufl.core.expr.Expr, n: ufl.FacetNormal) -> ufl.core.operator.Operator:
+    """Upwind function trace.
+
+    The value of the trace at an interior element interface is chosen to be
+    either F(+) or F(-) depending on the characteristic speeds. If, from both
+    sides, the signal is traveling from + to -, F(+) is used, and vice, versa.
+    If the characteristics disagree, then an average is used.
+    """
+
+    # Project J from + and - onto outward normal of + to get speeds
+    # Positive means that the signal travels from + to - for both
+    J_plus_n_plus = ufl.dot(J('+'), n('+'))
+    J_minus_n_plus = ufl.dot(J('-'), n('+'))
+
+    # Determine whether the wave is definitively entering or leaving +
+    # Again, positive means that the signal travels from + to - for both
+    leaving_plus = ufl.And(
+        ufl.gt(J_plus_n_plus, 0.0),
+        ufl.gt(J_minus_n_plus, 0.0)
+    )
+    entering_plus = ufl.And(
+        ufl.lt(J_plus_n_plus, 0.0),
+        ufl.lt(J_minus_n_plus, 0.0)
+    )
+
+    # Return the upwind trace from the appropriate source element
+    return ufl.conditional(
+        leaving_plus, # If + to -, use +
+        F('+'),
+        ufl.conditional(
+            entering_plus, # If - to +, use -
+            F('-'),
+            ufl.avg(F) # Otherwise, use average
+        )
+    )
+
+def trace_downwind(F: ufl.core.expr.Expr, U: dolfinx.fem.Function,
+    J: ufl.core.expr.Expr, n: ufl.FacetNormal) -> ufl.core.operator.Operator:
+    """Downwind function trace.
+
+    The value of the trace at an interior element interface is chosen to be
+    either F(+) or F(-) depending on the characteristic speeds. If, from both
+    sides, the signal is traveling from + to -, F(+) is used, and vice, versa.
+    If the characteristics disagree, then an average is used.
+    """
+
+    # Project J from + and - onto outward normal of + to get speeds
+    # Positive means that the signal travels from + to - for both
+    J_plus_n_plus = ufl.dot(J('+'), n('+'))
+    J_minus_n_plus = ufl.dot(J('-'), n('+'))
+
+    # Determine whether the wave is definitively entering or leaving +
+    # Again, positive means that the signal travels from + to - for both
+    leaving_plus = ufl.And(
+        ufl.gt(J_plus_n_plus, 0.0),
+        ufl.gt(J_minus_n_plus, 0.0)
+    )
+    entering_plus = ufl.And(
+        ufl.lt(J_plus_n_plus, 0.0),
+        ufl.lt(J_minus_n_plus, 0.0)
+    )
+
+    # Return the upwind trace from the appropriate source element
+    return ufl.conditional(
+        leaving_plus, # If + to -, use -
+        F('-'),
+        ufl.conditional(
+            entering_plus, # If - to +, use +
+            F('+'),
+            ufl.avg(F) # Otherwise, use average
+        )
+    )
+
 def fluxn_upwind_scalar(F: ufl.core.expr.Expr, U: dolfinx.fem.Function,
     J: ufl.core.expr.Expr, n: ufl.FacetNormal) -> ufl.core.operator.Operator:
     """Upwind flux trace.

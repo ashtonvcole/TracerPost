@@ -109,7 +109,7 @@ class DifferentialAlgebraicFormulation:
         return self._q
 
     @q.setter
-    def q(self, value)
+    def q(self, value):
         self._q = value
         self._dq = ufl.TrialFunction(value.function_space)
 
@@ -219,62 +219,167 @@ class DifferentialAlgebraicFormulation:
         return self._dresidual_form_r_dr
 
 class CGFormulation(DifferentialFormulation):
-    """Continuous Galerkin formulation for a conservation law."""
-    def __init__(self, equation: equations.ConservationLaw,
-        domain: dolfinx.mesh.Mesh,
-        space: dolfinx.fem.FunctionSpace):
+    """Continuous Galerkin formulation for a conservation law.
+
+    Given an arbitrary conservation law,
+
+    dU/dt + div F = S
+
+    this constructs the simple CG weak form.
+
+    dq/dt * phi * dx = F . grad(phi) * dx - F . n * phi * ds + S * phi * dx
+
+    It inherits from the DifferentialFormulation class.
+    """
+
+    def __init__(self, equation: equations.ConservationLaw):
         # Preliminaries
+        space = equation.U.function_space
+        domain = equation.U.function_space.mesh
         phi = ufl.TestFunction(space)
         n = ufl.FacetNormal(domain)
 
-        # Set solution variable
+        # Set solution variable and equation
         self.q = equation.U
+        self.equation = equation
 
         # Construct M(dq/dt; phi) using trial function
         self.mass_form = self._dq * phi * ufl.dx
 
         # Construct R(q; phi) from flux and source terms
-        self.residual_form = ufl.dot(equation.F, ufl.grad(phi)) * ufl.dx
+        self.residual_form = ufl.dot(self.equation.F, ufl.grad(phi)) * ufl.dx
         # Add exterior boundary contribution
         self.residual_form += -ufl.conditional(
-            ufl.dot(equation.J, n) > 0.0,
-            ufl.dot(equation.F, n),
+            ufl.dot(self.equation.J, n) > 0.0,
+            ufl.dot(self.equation.F, n),
             dolfinx.fem.Constant(domain, 0.0)
         ) * phi * ufl.ds
-        if equation.S is not None:
-            self.residual_form += equation.S * phi * ufl.dx
+        # Add source
+        if self.equation.S is not None:
+            self.residual_form += self.equation.S * phi * ufl.dx
 
 class DGFormulation(DifferentialFormulation):
-    """Discontinuous Galerkin formulation for a conservation law."""
-    def __init__(self, equation: equations.ConservationLaw,
-        domain: dolfinx.mesh.Mesh,
-        space: dolfinx.fem.FunctionSpace, trace_function):
+    """Discontinuous Galerkin formulation for a conservation law.
+
+    Given an arbitrary conservation law,
+
+    dU/dt + div F = S
+
+    this constructs the simple DG weak form.
+
+    dq/dt * phi * dx = F . grad(phi) * dx - trace(F . n) * jump(phi) * dS -
+    F . n * phi * ds + S * phi * dx
+
+    It inherits from the DifferentialFormulation class.
+    """
+
+    def __init__(self, equation: equations.ConservationLaw, trace_function):
         # Preliminaries
+        space = equation.U.function_space
+        domain = equation.U.function_space.mesh
         phi = ufl.TestFunction(space)
         n = ufl.FacetNormal(domain)
 
-        # Set solution variable
+        # Set solution variable and equation
         self.q = equation.U
+        self.equation = equation
 
         # Construct M(dq/dt; phi) using trial function
         self.mass_form = self._dq * phi * ufl.dx
 
         # Construct R(q; phi) from flux and source terms
-        self.residual_form = ufl.dot(equation.F, ufl.grad(phi)) * ufl.dx
+        self.residual_form = ufl.dot(self.equation.F, ufl.grad(phi)) * ufl.dx
         # Add interior face contributions
         self.residual_form += -trace_function(
-            equation.F,
-            equation.U,
-            equation.J,
+            self.equation.F,
+            self.equation.U,
+            self.equation.J,
             n
         ) * ufl.jump(phi) * ufl.dS
         # Add exterior boundary contribution
         self.residual_form += -ufl.conditional(
-            ufl.dot(equation.J, n) > 0.0,
-            ufl.dot(equation.F, n),
+            ufl.dot(self.equation.J, n) > 0.0,
+            ufl.dot(self.equation.F, n),
             dolfinx.fem.Constant(domain, 0.0)
         ) * phi * ufl.ds
+        # Add source
+        if self.equation.S is not None:
+            self.residual_form += self.equation.S * phi * ufl.dx
+
+class LDGFormulation(DifferentialAlgebraicFormulation):
+    """Local Discontinuous Galerkin formulation for a conservation law.
+
+    Given an arbitrary parabolic conservation law,
+
+    dU/dt + div F(U, grad U) = S
+
+    this constructs a DG weak form with an auxiliary variable for a gradient.
+
+    dq/dt * phi * dx = F(q, r) . grad(phi) * dx - trace(F(q, r) . n) *
+        jump(phi) * dS - F(q, r) . n * phi * ds + S * phi * dx
+    r . psi * dx = - grad_of * div(psi) * dx + trace(grad_of) * jump(psi) . n *
+        dS + grad_of * psi . n * ds
+
+    It inherits from the DifferentialAlgebraicFormulation class.
+    """
+
+    def __init__(self, equation: equations.ConservationLaw,
+        grad_of: ufl.core.expr.Expr, space_auxiliary: dolfinx.fem.FunctionSpace,
+        trace_function_q, trace_function_r):
+        # Preliminaries
+        space = equation.U.function_space
+        domain = equation.U.function_space.mesh
+        phi = ufl.TestFunction(space)
+        psi = ufl.TestFunction(space_auxiliary)
+        n = ufl.FacetNormal(domain)
+
+        # Set solution and algebraic variables
+        self.q = equation.U
+        self.equation = equation
+        self.r = dolfinx.fem.Function(space_auxiliary)
+
+        # Replace gradient in flux with auxiliary variable for LDG
+        self.equation.F = ufl.replace(
+            self.equation.F,
+            {ufl.grad(grad_of): self.r}
+        )
+
+        # Construct q mass
+        self.mass_form_q = self._dq * phi * ufl.dx
+
+        # Construct q residual
+        self.residual_form_q = ufl.dot(self.equation.F, ufl.grad(phi)) * ufl.dx
+        # Add interior face contributions
+        self.residual_form_q += -trace_function_q(
+            self.equation.F,
+            self.equation.U,
+            self.equation.J,
+            n
+        ) * ufl.jump(phi) * ufl.dS
+        # Add exterior boundary contribution
+        self.residual_form_q += -ufl.conditional(
+            ufl.dot(self.equation.J, n) > 0.0,
+            ufl.dot(self.equation.F, n),
+            dolfinx.fem.Constant(domain, 0.0)
+        ) * phi * ufl.ds
+        # Add source
         if equation.S is not None:
-            self.residual_form += equation.S * phi * ufl.dx
+            self.residual_form_q += self.equation.S * phi * ufl.dx
+
+        # Construct r mass
+        self.mass_form_r = ufl.dot(self._dr, psi) * ufl.dx
+
+        # Construct r residual
+        self.residual_form_r = -grad_of * ufl.div(psi) * ufl.dx
+        # Add interior face contributions
+        self.residual_form_r += trace_function_r(
+            grad_of,
+            self.equation.U,
+            self.equation.J,
+            n
+        ) * ufl.jump(psi, n) * ufl.dS
+        # Add exterior boundary conditions
+        # @TODO fix this?
+        self.residual_form_r += grad_of * ufl.dot(psi, n) * ufl.ds
 
 # SUPG, SIPG, LDG
