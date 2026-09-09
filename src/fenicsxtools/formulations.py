@@ -7,8 +7,8 @@ from . import equations
 import dolfinx
 import ufl
 
-class Formulation:
-    """Generalized FEM formulation.
+class DifferentialFormulation:
+    """Generalized simple FEM formulation.
 
     This formulation relies on the following general semi-discrete weak form
     that comes from conservation laws.
@@ -18,12 +18,23 @@ class Formulation:
     mass_form(dq/dt; phi) = residual(q; phi)
 
     Attributes:
+        q (dolfinx.fem.Function): The solution variable.
         equation (equations.ConservationLaw): The conservation law being solved.
         mass_form (ufl.Form): The weak form of the time derivative.
-        residual_form (ufl.Form): The semi-discrete residual.
-        dresidual_form (ufl.Form): The weak form for the semi-discrete Jacobian
-            dR/dq. Not to be confused with the flux Jacobian.
+        residual_form (ufl.Form): The weak form of the residual.
+        dresidual_form_dq (ufl.Form): The weak form for the semi-discrete
+            Jacobian dR/dq. Not to be confused with the flux Jacobian.
     """
+
+    @property
+    def q(self) -> dolfinx.fem.Function:
+        """dolfinx.fem.Function: The solution variable."""
+        return self._q
+
+    @q.setter
+    def q(self, value):
+        self._q = value
+        self._dq = ufl.TrialFunction(value.function_space)
 
     @property
     def equation(self) -> equations.ConservationLaw:
@@ -51,30 +62,176 @@ class Formulation:
     @residual_form.setter
     def residual_form(self, value: ufl.Form):
         self._residual_form = value
+        # Update form Jacobian
+        self._dresidual_form_dq = ufl.derivative(
+            value,
+            self.q,
+            self._dq
+        )
 
     @property
-    def dresidual_form(self) -> ufl.Form:
+    def dresidual_form_dq(self) -> ufl.Form:
         """ufl.Form: The weak form for the semi-discrete Jacobian dR/dq. Not to
         be confused with the flux Jacobian.
         """
-        return self._dresidual_form
+        return self._dresidual_form_dq
 
-    @dresidual_form.setter
-    def dresidual_form(self, value: ufl.Form):
-        self._dresidual_form = value
+class DifferentialAlgebraicFormulation:
+    """Generalized differential-algebraic FEM formulation.
 
-class CGFormulation(Formulation):
+    This formulation relies on the following general semi-discrete weak form
+    that comes from conservation laws.
+
+    Find q in Uh such that, for all phi in Vh and psi in Wh,
+
+    mass_form_q(dq/dt; phi) = residual_q(q, r; phi)
+    mass_form_r(r; psi) = residual_r(q, r; psi)
+
+    Attributes:
+        q (dolfinx.fem.Function): The solution variable.
+        r (dolfinx.fem.Function): The algebraic variable.
+        equation (equations.ConservationLaw): The conservation law being solved.
+        mass_form_q (ufl.Form): The weak form of the time derivative of q.
+        mass_form_r (ufl.Form): The weak form of the mass form of r.
+        residual_form_q (ufl.Form): The semi-discrete residual of q.
+        residual_form_r (ufl.Form): The semi-discrete residual of r.
+        dresidual_q_form (ufl.Form): The weak form for the semi-discrete
+            Jacobian dR_q/dq + dR_q/dr. Not to be confused with the flux
+            Jacobian.
+        dresidual_r_form (ufl.Form): The weak form for the semi-discrete
+            Jacobian dR_r/dq + dR_r/dr. Not to be confused with the flux
+            Jacobian.
+    """
+
+    @property
+    def q(self) -> dolfinx.fem.Function:
+        """dolfinx.fem.Function: The solution variable."""
+        return self._q
+
+    @q.setter
+    def q(self, value)
+        self._q = value
+        self._dq = ufl.TrialFunction(value.function_space)
+
+    @property
+    def r(self) -> dolfinx.fem.Function:
+        """dolfinx.fem.Function: The algebraic variable."""
+        return self._r
+
+    @r.setter
+    def r(self, value):
+        self._r = value
+        self._dr = ufl.TrialFunction(value.function_space)
+
+    @property
+    def equation(self) -> equations.ConservationLaw:
+        """equations.ConservationLaw: The conservation law being solved."""
+        return self._equation
+
+    @equation.setter
+    def equation(self, value: equations.ConservationLaw):
+        self._equation = value
+
+    @property
+    def mass_form_q(self) -> ufl.Form:
+        """ufl.Form: The weak form of the time derivative of q."""
+        return self._mass_form_q
+
+    @mass_form_q.setter
+    def mass_form_q(self, value: ufl.Form):
+        self._mass_form_q = value
+
+    @property
+    def mass_form_r(self) -> ufl.Form:
+        """ufl.Form: The weak form of the mass form of r."""
+        return self._mass_form_r
+
+    @mass_form_r.setter
+    def mass_form_r(self, value: ufl.Form):
+        self._mass_form_r = value
+
+    @property
+    def residual_form_q(self) -> ufl.Form:
+        """ufl.Form: The weak form of the residual of q."""
+        return self._residual_form_q
+
+    @residual_form_q.setter
+    def residual_form_q(self, value: ufl.Form):
+        self._residual_form_q = value
+        # Update q form Jacobians
+        self._dresidual_form_q_dq = ufl.derivative(
+            value,
+            self.q,
+            self._dq
+        )
+        self._dresidual_form_q_dr = ufl.derivative(
+            value,
+            self.r,
+            self._dr
+        )
+
+    @property
+    def residual_form_r(self) -> ufl.Form:
+        """ufl.Form: The weak form of the residual of r."""
+        return self._residual_form_r
+
+    @residual_form_r.setter
+    def residual_form_r(self, value: ufl.Form):
+        self._residual_form_r = value
+        # Update r form Jacobians
+        self._dresidual_form_r_dq = ufl.derivative(
+            value,
+            self.q,
+            self._dq
+        )
+        self._dresidual_form_r_dr = ufl.derivative(
+            value,
+            self.r,
+            self._dr
+        )
+
+    @property
+    def dresidual_form_q_dq(self) -> ufl.Form:
+        """ufl.Form: The weak form for the semi-discrete Jacobian dR_q/dq. Not
+        to be confused with the flux Jacobian.
+        """
+        return self._dresidual_form_q_dq
+
+    @property
+    def dresidual_form_q_dr(self) -> ufl.Form:
+        """ufl.Form: The weak form for the semi-discrete Jacobian dR_q/dr. Not
+        to be confused with the flux Jacobian.
+        """
+        return self._dresidual_form_q_dr
+
+    @property
+    def dresidual_form_r_dq(self) -> ufl.Form:
+        """ufl.Form: The weak form for the semi-discrete Jacobian dR_r/dq. Not
+        to be confused with the flux Jacobian.
+        """
+        return self._dresidual_form_r_dq
+
+    @property
+    def dresidual_form_r_dr(self) -> ufl.Form:
+        """ufl.Form: The weak form for the semi-discrete Jacobian dR_r/dr. Not
+        to be confused with the flux Jacobian.
+        """
+        return self._dresidual_form_r_dr
+
+class CGFormulation(DifferentialFormulation):
     """Continuous Galerkin formulation for a conservation law."""
     def __init__(self, equation: equations.ConservationLaw,
         domain: dolfinx.mesh.Mesh,
         space: dolfinx.fem.FunctionSpace):
-        dq_dt = ufl.TrialFunction(space) # For mass form
-        dq = ufl.TrialFunction(space) # For residual Jacobian form
+        # Preliminaries
         phi = ufl.TestFunction(space)
         n = ufl.FacetNormal(domain)
 
-        # Construct M(dq/dt; phi)
-        self.mass_form = dq_dt * phi * ufl.dx
+        # Set solution variable
+        self.q = equation.U
+
+        # Construct M(dq/dt; phi) using trial function
+        self.mass_form = self._dq * phi * ufl.dx
 
         # Construct R(q; phi) from flux and source terms
         self.residual_form = ufl.dot(equation.F, ufl.grad(phi)) * ufl.dx
@@ -87,23 +244,20 @@ class CGFormulation(Formulation):
         if equation.S is not None:
             self.residual_form += equation.S * phi * ufl.dx
 
-        # Construct dR/dq(q; phi)
-        self.dresidual_form = ufl.derivative(
-            self.residual_form,
-            equation.U,
-            dq
-        )
-
-class DGFormulation(Formulation):
+class DGFormulation(DifferentialFormulation):
+    """Discontinuous Galerkin formulation for a conservation law."""
     def __init__(self, equation: equations.ConservationLaw,
         domain: dolfinx.mesh.Mesh,
         space: dolfinx.fem.FunctionSpace, trace_function):
-        dq_dt = ufl.TrialFunction(space)
+        # Preliminaries
         phi = ufl.TestFunction(space)
         n = ufl.FacetNormal(domain)
 
-        # Construct M(dq/dt; phi)
-        self.mass_form = dq_dt * phi * ufl.dx
+        # Set solution variable
+        self.q = equation.U
+
+        # Construct M(dq/dt; phi) using trial function
+        self.mass_form = self._dq * phi * ufl.dx
 
         # Construct R(q; phi) from flux and source terms
         self.residual_form = ufl.dot(equation.F, ufl.grad(phi)) * ufl.dx
@@ -122,12 +276,5 @@ class DGFormulation(Formulation):
         ) * phi * ufl.ds
         if equation.S is not None:
             self.residual_form += equation.S * phi * ufl.dx
-
-        # Construct dR/dq(q; phi)
-        self.dresidual_form = ufl.derivative(
-            self.residual_form,
-            equation.U,
-            phi
-        )
 
 # SUPG, SIPG, LDG
