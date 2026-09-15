@@ -2,12 +2,16 @@ name: fenicsx-env
 channels:
   - conda-forge
 dependencies:
-  - python=3.11
+  - python=3.12
   - fenics-dolfinx=0.11.0
+  - adios2
+  - scipy
+  - matplotlib
   - mpich
   - pyvista
   - jupyterlab
   - imageio
   - pip
   - pip:
+      - adios4dolfinx==0.11.0
       - -e .[viz,dev]
