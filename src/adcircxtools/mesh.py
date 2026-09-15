@@ -406,7 +406,7 @@ class ADCIRCMesh:
         self._PIPEDIAM = value
 
     @classmethod
-    def from_fort_14(cls, filepath):
+    def from_fort_14(cls, filepath: str) -> 'ADCIRCMesh':
         """Instantiate an ADCIRCMesh object from a fort.14 ADCIRC mesh file.
 
         Arguments:
@@ -417,7 +417,7 @@ class ADCIRCMesh:
         """
         with open(filepath, 'r') as f:
             # Read name
-            AGRID = f.readline()
+            AGRID = f.readline().strip()
 
             # Read number of elements and nodes
             NE, NP = numpy.loadtxt(f, dtype=int, max_rows=1, usecols=(0, 1))
@@ -552,4 +552,123 @@ class ADCIRCMesh:
             PIPEHT = PIPEHT,
             PIPECOEF = PIPECOEF,
             PIPEDIAM = PIPEDIAM
+        )
+
+class Mesh:
+    """Wrapper for a generic mesh object."""
+
+    def __init__(self, coordinates: numpy.ndarray, elements: numpy.ndarray):
+        """Constructor.
+
+        Arguments:
+            coordinates (numpy.ndarray): The coordinates of each node.
+            elements (numpy.ndarray): The nodes in each element."""
+        self.coordinates = coordinates
+        self.elements = elements
+
+    @property
+    def coordinates(self) -> numpy.ndarray:
+        """numpy.ndarray: The coordinates of each node."""
+        return self._coordinates
+
+    @coordinates.setter
+    def coordinates(self, value: numpy.ndarray):
+        self._coordinates = value
+        self._num_nodes = value.shape[0]
+
+    @property
+    def elements(self) -> numpy.ndarray:
+        """numpy.ndarray: The nodes in each element."""
+        return self._elements
+
+    @elements.setter
+    def elements(self, value: numpy.ndarray):
+        self._elements = value
+        self._num_elements = value.shape[0]
+
+    @property
+    def num_nodes(self) -> int:
+        """int: The number of nodes in the mesh."""
+        return self._num_nodes
+
+        @property
+        def num_elements(self) -> int:
+            """int: The number of elements in the mesh."""
+            return self._num_elements
+
+    @classmethod
+    def from_ADCIRCMesh(cls, adcirc_mesh: ADCIRCMesh) -> 'Mesh':
+        """Construct a generic mesh from an ADCIRC mesh.
+
+        Arguments:
+            adcirc_mesh (ADCIRCMesh): A complete ADCIRC mesh object which
+                follows ADCIRC mesh conventions, including JN and JE being
+                monotonically increasing.
+        Returns:
+            Mesh: A pared-down 2D mesh structure.
+        """
+        coordinates = numpy.column_stack((adcirc_mesh.X, adcirc_mesh.Y))
+        elements = numpy.searchsorted(adcirc_mesh.JN, adcirc_mesh.NM)
+        return cls(coordinates=coordinates, elements=elements)
+
+    def filter_by_coordinates(self, coordinate_filter) -> tuple['Mesh',
+        numpy.ndarray, numpy.ndarray]:
+        """Generate a new mesh by coordinate filter.
+
+        Arguments:
+            coordinate_filter: Callable[[float, float], bool]: A filter that
+                takes in the 2D coordinates and returns a boolean.
+
+        Returns:
+            tuple[Mesh, numpy.ndarray, numpy.ndarray]
+            Mesh: A mesh for which all nodes and elements are contained within
+                the filter. This should be able to be applied to numpy.ndarrays
+                in a vectorized manner.
+            numpy.ndarray: A mapping from the old mesh nodes indices to the
+                filtered mesh node indices. Filtered nodes are -1.
+            numpy.ndarray: A mapping from the old mesh element indices to the
+                filtered mesh element indices. Filtered elements are -1.
+        """
+        # Figure out which nodes are in range
+        mask_nodes_in_filter = coordinate_filter(
+            self.coordinates[:, 0],
+            self.coordinates[:, 1]
+        )
+
+        # Figure out which elements are in range,
+        # i.e. every node is in range
+        mask_elements_in_filter = (
+            mask_nodes_in_filter[self.elements[:, 0]] &
+            mask_nodes_in_filter[self.elements[:, 1]] &
+            mask_nodes_in_filter[self.elements[:, 2]]
+        )
+
+        # Figure out which nodes are associated with a filtered element
+        # Sometimes there are orphan nodes, whose neighbors are all out of range
+        nodes_in_filtered_elements = numpy.unique(
+            self.elements[mask_elements_in_filter]
+        )
+        mask_nodes_in_elements = numpy.isin(
+            numpy.arange(self.num_nodes), # Implicit node indices
+            nodes_in_filtered_elements
+        )
+
+        # Create new coordinates array
+        mask_nodes = mask_nodes_in_filter & mask_nodes_in_elements
+        filtered_coordinates = self.coordinates[mask_nodes]
+
+        # Create new elements array
+        # Indices should also be renumbered appropriately
+        filtered_elements = self.elements[mask_elements_in_filter]
+        node_indices = numpy.cumsum(mask_nodes) - 1 # Renumbering
+        node_indices[~mask_nodes] = -1
+        filtered_elements = node_indices[filtered_elements]
+        element_indices = numpy.cumsum(mask_elements_in_filter) # Renumbering
+        element_indices[~mask_elements_in_filter] = -1
+
+        # Construct a new object from the result
+        return (
+            type(self)(filtered_coordinates, filtered_elements),
+            node_indices,
+            element_indices
         )
