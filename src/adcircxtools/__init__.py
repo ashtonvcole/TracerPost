@@ -1,3 +1,3 @@
-from . import mesh, geometry
+from . import mesh, geometry, io
 
-__all__ = ['mesh', 'geometry']
+__all__ = ['mesh', 'geometry', 'io']
