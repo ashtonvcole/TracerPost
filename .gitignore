@@ -4,3 +4,5 @@ __pycache__
 *.14
 *.npy
 *.bp
+*.nc
+fort.*
