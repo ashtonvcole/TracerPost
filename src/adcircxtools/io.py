@@ -22,11 +22,11 @@ class TimeSeriesBuffer:
         """
         self._path = path
         self._f = None # Wait to open the file
-        self._NDSETS = None # Number of records
-        self._NP = None # Number of nodes
-        self._DTDP_NSPOOL = None # Time increment between writes
-        self._NSPOOL = None # Iteration increment between writes
-        self._IRTYPE = None # Record type
+        self._NDSETS = 0 # Number of records
+        self._NP = 0 # Number of nodes
+        self._DTDP_NSPOOL = 0.0 # Time increment between writes
+        self._NSPOOL = 0 # Iteration increment between writes
+        self._IRTYPE = 0 # Record type
         self._num_read = 0 # Counter for records
 
     def __enter__(self):
@@ -61,9 +61,13 @@ class TimeSeriesBuffer:
         self._f.readline() # Skip descriptive header
 
         # Read data set metadata
-        (self._NDSETS, self._NP, self._DTDP_NSPOOL, self._NSPOOL,
-            self._IRTYPE) = numpy.loadtext(self._f, dtype=float, max_rows=1,
+        meta = numpy.loadtxt(self._f, dtype=float, max_rows=1,
             usecols=(0, 1, 2, 3, 4))
+        self._NDSETS = int(meta[0])
+        self._NP = int(meta[1])
+        self._DTDP_NSPOOL = float(meta[2])
+        self._NSPOOL = int(meta[3])
+        self._IRTYPE = int(meta[4])
         self._num_read = 0
 
     def read_step(self, node_mask: numpy.ndarray = None
@@ -82,10 +86,12 @@ class TimeSeriesBuffer:
                 not necessarily 0, 1, 2...
             data (numpy.ndarray): The nodal data assocaited with the record.
             """
-        time, it = numpy.loadtext(self._f, dtype=float, max_rows=1,
+        data = numpy.loadtxt(self._f, dtype=float, max_rows=1,
             usecols=(0, 1))
-        data = numpy.loadtext(self._f, dtype=float, max_rows=self._NP)
-        data = data[1:] # Filter out k, this is not the same as JN
+        time = float(data[0])
+        it = int(data[1])
+        data = numpy.loadtxt(self._f, dtype=float, max_rows=self._NP)
+        data = data[:, 1:] # Filter out k, this is not the same as JN
         self._num_read += 1
         if node_mask is not None:
             data = data[node_mask, :]
