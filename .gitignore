@@ -2,6 +2,7 @@
 .DS_Store
 __pycache__
 *.14
+*.6*
 *.npy
 *.bp
 *.nc
