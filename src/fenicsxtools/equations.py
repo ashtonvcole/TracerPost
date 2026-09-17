@@ -86,7 +86,7 @@ class ConservationLaw:
         S = ufl.formatting.ufl2unicode.ufl2unicode(ufl.algorithms.ad.expand_derivatives(self._S)) if self._S is not None else '0'
         return f'dU/dt + div({F}) = {S}'
 
-def get_advection(domain: dolfinx.mesh.Mesh,
+def get_constant_advection(domain: dolfinx.mesh.Mesh,
     U: dolfinx.fem.Function, v: float | tuple) -> ConservationLaw:
     """Get constant- and homogeneous-coefficient scalar advection problem.
 
@@ -108,8 +108,8 @@ def get_advection(domain: dolfinx.mesh.Mesh,
         F=U * vv
     )
 
-def get_advection_diffusion(domain: dolfinx.mesh.Mesh, U: dolfinx.fem.Function,
-    v: float | tuple, d: float) -> ConservationLaw:
+def get_constant_advection_diffusion(domain: dolfinx.mesh.Mesh,
+    U: dolfinx.fem.Function, v: float | tuple, d: float) -> ConservationLaw:
     """Get a constant- and homogeneneous-coefficient scalar advection-diffusion
     problem.
 
@@ -128,6 +128,26 @@ def get_advection_diffusion(domain: dolfinx.mesh.Mesh, U: dolfinx.fem.Function,
     return ConservationLaw(
         U=U,
         F=U * vv - d * ufl.grad(U)
+    )
+
+def get_advection(domain: dolfinx.mesh.Mesh, U: dolfinx.fem.Function,
+    v: dolfinx.fem.Function) -> ConservationLaw:
+    """Get an advection problem, with potentially space- and time-varying
+    velocity.
+
+    du/dt + div(u v) = 0
+
+    Arguments:
+        domain (dolfinx.mesh.Mesh): The domain of the problem.
+        u (dolfinx.fem.Function): The conserved quantity. This reference is
+            important for correctly constructing the solution method.
+        v (dolfinx.fem.Function): The advection velocity function. This may be
+            updated during solution to represent a time-varying quantity, but
+            care must be taken to correctly update operators and residuals.
+    """
+    return ConservationLaw(
+        U=U,
+        F=U * v
     )
 
 def get_depth_averaged_advection_diffusion(domain: dolfinx.mesh.Mesh,
