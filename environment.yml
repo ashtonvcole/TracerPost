@@ -11,6 +11,7 @@ dependencies:
   - pyvista
   - jupyterlab
   - imageio
+  - cmocean
   - pip
   - pip:
       - adios4dolfinx==0.11.0
