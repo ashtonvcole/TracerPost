@@ -120,11 +120,49 @@ class SemiDiscreteSystem:
         self._lifts = lifts
 
     @property
-    def equations(self) -> list[SemiDiscreteEquation]:
+    def sdequations(self) -> list[SemiDiscreteEquation]:
         return self._equations
 
     def lifts(self) -> list[SemiDiscreteEquation] | None:
         return self._lifts
+
+    @classmethod
+    def from_CG(cls, equation: equations.ConservationLaw,
+        ) -> 'SemiDiscreteSystem':
+        """Create a semi-discrete system of equations using the Continuous
+        Galerkin method.
+
+        Given an arbitrary conservation law,
+
+        dU/dt + div F = S
+
+        this constructs the simple CG weak form.
+
+        dq/dt * phi * dx = F . grad(phi) * dx - F . n * phi * ds + S * phi * dx
+        """
+        # Preliminaries
+        space = equation.U.function_space
+        domain = equation.U.function_space.domain
+        xi = ufl.TrialFunction(space)
+        phi = ufl.TestFunction(space)
+        n = ufl.FacetNormal(domain)
+
+        # Define the main weak form
+        bilinear_form = xi * phi * ufl.dx
+        if equation.F_stiff is not None:
+            pass ##### CONTINUE HERE
+        sd_equation = SemiDiscreteEquation(
+            variable=equation.U,
+            is_differential=True,
+            bilinear_form=bilinear_form,
+            stiff_residual_form=stiff_residual_form,
+            non_stiff_residual_form=non_stiff_residual_form,
+            is_bilinear_form_constant=True
+        )
+        return cls([sd_equation], None)
+
+# Begin deferred structures
+# To be removed
 
 class DifferentialFormulation:
     """Generalized simple FEM formulation.
