@@ -84,7 +84,7 @@ class ConservationLaw:
         U = ufl.formatting.ufl2unicode.ufl2unicode(self._U)
         F = ufl.formatting.ufl2unicode.ufl2unicode(ufl.algorithms.ad.expand_derivatives(self._F))
         S = ufl.formatting.ufl2unicode.ufl2unicode(ufl.algorithms.ad.expand_derivatives(self._S)) if self._S is not None else '0'
-        return f'dU/dt + div({F}) = {S}'
+        return f'd{U}/dt + div({F}) = {S}'
 
 def get_constant_advection(domain: dolfinx.mesh.Mesh,
     U: dolfinx.fem.Function, v: float | tuple) -> ConservationLaw:
