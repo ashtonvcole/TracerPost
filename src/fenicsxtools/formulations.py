@@ -3,9 +3,128 @@
 Different FEM formulation options for conservation laws.
 """
 
+from types import NoneType
+
 from . import equations
 import dolfinx
 import ufl
+
+class SemiDiscreteEquation:
+    """Abstraction for semidiscrete equations found in FEM formulations.
+
+    B(xi; phi) = R_stiff(q, r, ...; phi) + R_nonstiff(q, r, ...; phi)
+
+    Attributes:
+        variable (dolfinx.fem.function): The solution variable associated with
+            this equation.
+        is_differential (bool): Whether this equation is a differential or
+            algebraic constraint. E.g., if variable = r and is_differential =
+            True, then xi is dr/dt.
+        bilinear_form (ufl.Form): The left-hand side of the equation, bilinear
+            in both the trial and test functions.
+        stiff_residual_form (ufl.Form): A stiff component of the residual,
+            marked for implicit treatment in an IMEX solver. This should be
+            linear in the test function. May be None.
+        non_stiff_residual_form (ufl.Form): A non-stiff component of the
+            residual, marked for explicit treatment in an IMEX solver. This
+            should be linear in the test function. May be None.
+    """
+    def __init__(self, variable: dolfinx.fem.Function, is_differential: bool,
+        bilinear_form: ufl.Form,
+        stiff_residual_form: ufl.Form = None,
+        non_stiff_residual_form: ufl.Form = None,
+        is_bilinear_form_constant: bool = False):
+        """Constructor.
+
+        Arguments:
+            variable (dolfinx.fem.function): The solution variable associated
+                with this equation.
+            is_differential (bool): Whether this equation is a differential or
+                algebraic constraint. E.g., if variable = r and is_differential
+                = True, then xi is dr/dt.
+            bilinear_form (ufl.Form): The left-hand side of the equation,
+                bilinear in both the trial and test functions.
+            stiff_residual_form (ufl.Form, optional): A stiff component of the
+                residual, marked for implicit treatment in an IMEX solver. This
+                should be linear in the test function. Default is None.
+            non_stiff_residual_form (ufl.Form, optional): A non-stiff component
+                of the residual, marked for explicit treatment in an IMEX
+                solver. This should be linear in the test function. Default is
+                None.
+            is_bilinear_form_constant (bool, optional): Whether the bilinear
+                form is constant in time. This impacts whether matrices need to
+                be re-formed at every time step, which is an expensive
+                operation. Default is False.
+        """
+        self._variable = variable
+        self._is_differential = is_differential
+        self._bilinear_form = bilinear_form
+        self._stiff_residual_form = stiff_residual_form
+        self._non_stiff_residual_form = non_stiff_residual_form
+        self._is_bilinear_form_constant = is_bilinear_form_constant
+
+    @property
+    def variable(self) -> dolfinx.fem.Function:
+        """dolfinx.fem.function: The solution variable associated with this
+        equation.
+        """
+        return self._variable
+
+    @property
+    def is_differential(self) -> bool:
+        """bool: Whether this equation is a differential or algebraic
+        constraint.
+        """
+        return self._is_differential
+
+    @property
+    def bilinear_form(self) -> ufl.Form:
+        """ufl.Form: The left-hand side of the equation, bilinear in both the trial
+        and test functions.
+        """
+        return self._bilinear_form
+
+    @property
+    def stiff_residual_form(self):
+        return self._stiff_residual_form
+
+    @property
+    def non_stiff_residual_form(self):
+        return self._non_stiff_residual_form
+
+class SemiDiscreteSystem:
+    """Abstraction for  a semi-discrete system of equations found in FEM
+    formulations.
+
+    Attributes:
+        equations (list[SemiDiscreteEquation]): A list of differential and
+            algebraic equations.
+        lifts (list[SemiDiscreteEquation]): A list of intermediate variable
+            lifts, provided in dependency order. E.g., if the equation for c
+            is dependent on a and b, b on a and c, and a on c, then the order
+            is a, b.
+    """
+    def __init__(self, equations: list[SemiDiscreteEquation],
+        lifts: list[SemiDiscreteEquation] | None = None):
+        """Constructor.
+
+        Arguments:
+            equations (list[SemiDiscreteEquation]): A list of differential and
+                algebraic equations.
+            lifts (list[SemiDiscreteEquation], optional): A list of intermediate
+                variable lifts, provided in dependency order. E.g., if the
+                equation for c is dependent on a and b, b on a and c, and a on
+                c, then the order is a, b. Default is None.
+        """
+        self._equations = equations
+        self._lifts = lifts
+
+    @property
+    def equations(self) -> list[SemiDiscreteEquation]:
+        return self._equations
+
+    def lifts(self) -> list[SemiDiscreteEquation] | None:
+        return self._lifts
 
 class DifferentialFormulation:
     """Generalized simple FEM formulation.
