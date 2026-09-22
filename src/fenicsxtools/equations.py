@@ -114,21 +114,10 @@ class ConservationLaw:
 
     Attributes:
         U (ufl.core.expr.Expr): The conserved quantity.
-        F (ufl.core.expr.Expr): The total vector-valued flux. May be None.
-        F_stiff (ufl.core.expr.Expr): The stiff vector-valued flux. May be None.
-        F_non_stiff (ufl.core.expr.Expr): The non-stiff vector-valued flux. May
-            be None.
-        J (ufl.core.expr.Expr): The total vector-valued flux Jacobian. May be
-            None.
-        J_stiff (ufl.core.expr.Expr): The stiff vector-valued flux Jacobian. May
-            be None.
-        J_non_stiff (ufl.core.expr.Expr): The non-stiff vector-valued flux
-            Jacobian. May be None.
-        S (ufl.core.expr.Expr): The total scalar-valued source. May be None.
-        S_stiff (ufl.core.expr.Expr): The stiff scalar-valued source. May be
-            None.
-        S_non_stiff (ufl.core.expr.Expr): The non-stiff scalar-valued source.
-            May be None.
+        fluxes (ufl.core.expr.Expr, optional): A list of vector-valued fluxes.
+            Default is None.
+        sources (ufl.core.expr.Expr, optional): A list of scalar-valued sources.
+            Default is None.
     """
 
     def __init__(self, U: dolfinx.fem.Function,
@@ -139,89 +128,14 @@ class ConservationLaw:
         Arguments:
             U (dolfinx.fem.Function): The conserved quantity. This reference is
                 important for correctly constructing the solution method.
-            F_stiff (ufl.core.expr.Expr, optional): The stiff vector-valued
-                flux. Default is None.
-            F_non_stiff (ufl.core.expr.Expr, optional): The non-stiff vector-
-                valued flux. Default is None.
-            S_stiff (ufl.core.expr.Expr, optional): The stiff scalar-valued
-                source. Default is None.
-            S_non_stiff (ufl.core.expr.Expr, optional): The non-stiff scalar-
-                valued source. Default is None.
+            fluxes (ufl.core.expr.Expr, optional): A list of vector-valued
+                fluxes. Default is None.
+            sources (ufl.core.expr.Expr, optional): A list of scalar-valued
+                sources. Default is None.
         """
         self._U = U
-        if F_stiff is not None and F_non_stiff is not None:
-            self._F = F_stiff + F_non_stiff
-        elif F_stiff is not None:
-            self._F = F_stiff
-        elif F_non_stiff is not None:
-            self._F = F_non_stiff
-        else:
-            self._F = None
-        self._F_stiff = F_stiff
-        self._F_non_stiff = F_non_stiff
-        if S_stiff is not None and S_non_stiff is not None:
-            self._S = S_stiff + S_non_stiff
-        elif S_stiff is not None:
-            self._S = S_stiff
-        elif S_non_stiff is not None:
-            self._S = S_non_stiff
-        else:
-            self._S = None
-        self._S_stiff = S_stiff
-        self._S_non_stiff = S_non_stiff
-
-        # Compute J symbolically
-        # UFL requires a Variable wrapper for differentiation
-        Uvar = ufl.variable(U)
-        # Nested replace-differentiate-replace
-        if F_stiff is not None and F_non_stiff is not None:
-            self._J_stiff = ufl.replace(
-                ufl.diff(
-                    ufl.replace(
-                        F_stiff,
-                        {U: Uvar}
-                    ),
-                    Uvar),
-                {Uvar: U}
-            )
-            self._J_non_stiff = ufl.replace(
-                ufl.diff(
-                    ufl.replace(
-                        F_non_stiff,
-                        {U: Uvar}
-                    ),
-                    Uvar),
-                {Uvar: U}
-            )
-            self._J = self._J_stiff + self._J_non_stiff
-        elif F_stiff is not None:
-            self._J_stiff = ufl.replace(
-                ufl.diff(
-                    ufl.replace(
-                        F_stiff,
-                        {U: Uvar}
-                    ),
-                    Uvar),
-                {Uvar: U}
-            )
-            self._J_non_stiff = None
-            self._J = self._J_stiff
-        elif F_non_stiff is not None:
-            self._J_stiff = None
-            self._J_non_stiff = ufl.replace(
-                ufl.diff(
-                    ufl.replace(
-                        F_non_stiff,
-                        {U: Uvar}
-                    ),
-                    Uvar),
-                {Uvar: U}
-            )
-            self._J = self._J_non_stiff
-        else:
-            self._J_stiff = None
-            self._J_non_stiff = None
-            self._J = None
+        self._fluxes = fluxes if fluxes is not None else []
+        self._sources = sources if fluxes is not None else []
 
     @property
     def U(self) -> ufl.core.expr.Expr:
@@ -229,56 +143,14 @@ class ConservationLaw:
         return self._U
 
     @property
-    def F(self) -> ufl.core.expr.Expr:
-        """ufl.core.expr.Expr: The total vector-valued flux."""
-        return self._F
+    def fluxes(self) -> ufl.core.expr.Expr:
+        """ufl.core.expr.Expr: A list of vector-valued fluxes. May be empty."""
+        return self._fluxes
 
     @property
-    def F_stiff(self) -> ufl.core.expr.Expr:
-        """ufl.core.expr.Expr: The stiff vector-valued flux."""
-        return self._F_stiff
-
-    @property
-    def F_non_stiff(self) -> ufl.core.expr.Expr:
-        """ufl.core.expr.Expr: The non-stiff vector-valued flux."""
-        return self._F_non_stiff
-
-    @property
-    def J(self) -> ufl.core.expr.Expr:
-        """ufl.core.expr.Expr: The total vector-valued flux Jacobian."""
-        return self._J
-
-    @property
-    def J_stiff(self) -> ufl.core.expr.Expr:
-        """ufl.core.expr.Expr: The stiff vector-valued flux Jacobian."""
-        return self._J_stiff
-
-    @property
-    def J_non_stiff(self) -> ufl.core.expr.Expr:
-        """ufl.core.expr.Expr: The non-stiff vector-valued flux Jacobian."""
-        return self._J_non_stiff
-
-    @property
-    def S(self) -> ufl.core.expr.Expr:
-        """ufl.core.expr.Expr: The total scalar-valued source."""
-        return self._S
-
-    @property
-    def S_stiff(self) -> ufl.core.expr.Expr:
-        """ufl.core.expr.Expr: The stiff scalar-valued source."""
-        return self._S_stiff
-
-    @property
-    def S_non_stiff(self) -> ufl.core.expr.Expr:
-        """ufl.core.expr.Expr: The non-stiff scalar-valued source."""
-        return self._S_non_stiff
-
-    def __str__(self):
-        """Represent the equation as a string."""
-        U = ufl.formatting.ufl2unicode.ufl2unicode(self._U)
-        F = ufl.formatting.ufl2unicode.ufl2unicode(ufl.algorithms.ad.expand_derivatives(self._F)) if self._F is not None else '0'
-        S = ufl.formatting.ufl2unicode.ufl2unicode(ufl.algorithms.ad.expand_derivatives(self._S)) if self._S is not None else '0'
-        return f'd{U}/dt + div({F}) = {S}'
+    def sources(self) -> ufl.core.expr.Expr:
+        """ufl.core.expr.Expr: A list of scalar-valued sources. May be empty."""
+        return self._sources
 
 def get_constant_advection(domain: dolfinx.mesh.Mesh,
     U: dolfinx.fem.Function, v: float | tuple) -> ConservationLaw:
@@ -299,7 +171,14 @@ def get_constant_advection(domain: dolfinx.mesh.Mesh,
     vv = dolfinx.fem.Constant(domain, v)
     return ConservationLaw(
         U=U,
-        F_non_stiff=U * vv
+        fluxes=[
+            Flux(
+                U=U,
+                expression=U * vv,
+                is_stiff=False,
+                is_hyperbolic=True
+            )
+        ]
     )
 
 def get_constant_advection_diffusion(domain: dolfinx.mesh.Mesh,
@@ -321,8 +200,20 @@ def get_constant_advection_diffusion(domain: dolfinx.mesh.Mesh,
     vv = dolfinx.fem.Constant(domain, v)
     return ConservationLaw(
         U=U,
-        F_stiff= -d * ufl.grad(U),
-        F_non_stiff=U * vv
+        fluxes=[
+            Flux(
+                U=U,
+                expression=U * vv,
+                is_stiff=False,
+                is_hyperbolic=True
+            ),
+            Flux(
+                U=U,
+                expression=-d * ufl.grad(U),
+                is_stiff=True,
+                is_hyperbolic=False
+            )
+        ]
     )
 
 def get_advection(domain: dolfinx.mesh.Mesh, U: dolfinx.fem.Function,
@@ -342,7 +233,14 @@ def get_advection(domain: dolfinx.mesh.Mesh, U: dolfinx.fem.Function,
     """
     return ConservationLaw(
         U=U,
-        F_non_stiff=U * v
+        fluxes=[
+            Flux(
+                U=U,
+                expression=U * v,
+                is_stiff=False,
+                is_hyperbolic=True
+            )
+        ]
     )
 
 def get_depth_averaged_advection_diffusion(domain: dolfinx.mesh.Mesh,
@@ -372,6 +270,18 @@ def get_depth_averaged_advection_diffusion(domain: dolfinx.mesh.Mesh,
     c = iota / h # Concentration
     return ConservationLaw(
         U=iota,
-        F_stiff= -ufl.dot(D, ufl.grad(c)),
-        F_non_stiff=iota * v
+        fluxes=[
+            Flux(
+                U=iota,
+                expression=iota * v,
+                is_stiff=False,
+                is_hyperbolic=True
+            ),
+            Flux(
+                U=iota,
+                expression=--ufl.dot(D, ufl.grad(c)),
+                is_stiff=True,
+                is_hyperbolic=False
+            )
+        ]
     )
