@@ -6,6 +6,55 @@ General templates for conservation laws.
 import dolfinx
 import ufl
 
+class Flux:
+    """A lightweight wrapper for a flux component of a conservation law.
+
+    Attributes:
+        expression (ufl.core.expr.Expr): The flux expression.
+        is_stiff (bool): Whether the term should be treated implicitly in
+            implicit-explicit (IMEX) formulations.
+        is_hyperbolic (bool): Whether the term is purely hyperbolic, or has
+            higher derivatives that lead to a parabolic conservation law. This
+            is used by the LDG formulation to determine whether an upwinded or
+            alternating trace is used.
+    """
+    
+    def __init__(self, expression: ufl.core.expr.Expr, is_stiff: bool,
+        is_hyperbolic: bool):
+        """Constructor.
+
+        Arguments:
+            expression (ufl.core.expr.Expr): The flux expression.
+            is_stiff (bool): Whether the term should be treated implicitly in
+                implicit-explicit (IMEX) formulations.
+            is_hyperbolic (bool): Whether the term is purely hyperbolic, or has
+                higher derivatives that lead to a parabolic conservation law.
+                This is used by the LDG formulation to determine whether an
+                upwinded or alternating trace is used.
+        """
+        self._expression = expression
+        self._is_stiff = is_stiff
+        self._is_hyperbolic = is_hyperbolic
+
+    @property
+    def expression(self) -> ufl.core.expr.Expr:
+        """ufl.core.expr.Expr: The flux expression."""
+        return self._expression
+
+    @property
+    def is_stiff(self) -> bool:
+        """bool: Whether the term should be treated implicitly in
+            implicit-explicit (IMEX) formulations."""
+        return self._is_stiff
+
+    @property
+    def is_hyperbolic(self) -> bool:
+        """bool: Whether the term is purely hyperbolic, or has
+            higher derivatives that lead to a parabolic conservation law.
+            This is used by the LDG formulation to determine whether an
+            upwinded or alternating trace is used."""
+        return self._is_hyperbolic
+
 class ConservationLaw:
     """Generalized conservation law.
 
