@@ -18,7 +18,7 @@ class Flux:
             is used by the LDG formulation to determine whether an upwinded or
             alternating trace is used.
     """
-    
+
     def __init__(self, expression: ufl.core.expr.Expr, is_stiff: bool,
         is_hyperbolic: bool):
         """Constructor.
@@ -54,6 +54,37 @@ class Flux:
             This is used by the LDG formulation to determine whether an
             upwinded or alternating trace is used."""
         return self._is_hyperbolic
+
+class Source:
+    """A lightweight wrapper for a source component of a conservation law.
+
+    Attributes:
+        expression (ufl.core.expr.Expr): The flux expression.
+        is_stiff (bool): Whether the term should be treated implicitly in
+            implicit-explicit (IMEX) formulations.
+    """
+
+    def __init__(self, expression: ufl.core.expr.Expr, is_stiff: bool):
+        """Constructor.
+
+        Arguments:
+            expression (ufl.core.expr.Expr): The flux expression.
+            is_stiff (bool): Whether the term should be treated implicitly in
+                implicit-explicit (IMEX) formulations.
+        """
+        self._expression = expression
+        self._is_stiff = is_stiff
+
+    @property
+    def expression(self) -> ufl.core.expr.Expr:
+        """ufl.core.expr.Expr: The source expression."""
+        return self._expression
+
+    @property
+    def is_stiff(self) -> bool:
+        """bool: Whether the term should be treated implicitly in
+            implicit-explicit (IMEX) formulations."""
+        return self._is_stiff
 
 class ConservationLaw:
     """Generalized conservation law.
