@@ -279,7 +279,7 @@ def get_depth_averaged_advection_diffusion(domain: dolfinx.mesh.Mesh,
             ),
             Flux(
                 U=iota,
-                expression=--ufl.dot(D, ufl.grad(c)),
+                expression=-ufl.dot(D, ufl.grad(c)),
                 is_stiff=True,
                 is_hyperbolic=False
             )
