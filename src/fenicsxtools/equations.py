@@ -13,20 +13,26 @@ class ConservationLaw:
 
     Attributes:
         U (ufl.core.expr.Expr): The conserved quantity.
-        F (ufl.core.expr.Expr): The total vector-valued flux.
+        F (ufl.core.expr.Expr): The total vector-valued flux. May be None.
         F_stiff (ufl.core.expr.Expr): The stiff vector-valued flux. May be None.
         F_non_stiff (ufl.core.expr.Expr): The non-stiff vector-valued flux. May
             be None.
-        J (ufl.core.expr.Expr): The total vector-valued flux Jacobian.
+        J (ufl.core.expr.Expr): The total vector-valued flux Jacobian. May be
+            None.
         J_stiff (ufl.core.expr.Expr): The stiff vector-valued flux Jacobian. May
             be None.
         J_non_stiff (ufl.core.expr.Expr): The non-stiff vector-valued flux
             Jacobian. May be None.
-        S (ufl.core.expr.Expr): A scalar-valued source expression. May be None.
+        S (ufl.core.expr.Expr): The total scalar-valued source. May be None.
+        S_stiff (ufl.core.expr.Expr): The stiff scalar-valued source. May be
+            None.
+        S_non_stiff (ufl.core.expr.Expr): The non-stiff scalar-valued source.
+            May be None.
     """
 
     def __init__(self, U: dolfinx.fem.Function, F_stiff: ufl.core.expr.Expr = None,
-        F_non_stiff: ufl.core.expr.Expr = None, S: ufl.core.expr.Expr = None):
+        F_non_stiff: ufl.core.expr.Expr = None, S_stiff: ufl.core.expr.Expr = None,
+        S_non_stiff: ufl.core.expr.Expr = None):
         """Constructor.
 
         Arguments:
@@ -34,10 +40,12 @@ class ConservationLaw:
                 important for correctly constructing the solution method.
             F_stiff (ufl.core.expr.Expr, optional): The stiff vector-valued
                 flux. Default is None.
-            F_non_stiff (ufl.core.expr.Expr): The non-stiff vector-valued flux.
-                Default is None.
-            S (ufl.core.expr.Expr, optional): A scalar-valued source expression.
-                Default is None, which results in no forcing.
+            F_non_stiff (ufl.core.expr.Expr, optional): The non-stiff vector-
+                valued flux. Default is None.
+            S_stiff (ufl.core.expr.Expr, optional): The stiff scalar-valued
+                source. Default is None.
+            S_non_stiff (ufl.core.expr.Expr, optional): The non-stiff scalar-
+                valued source. Default is None.
         """
         self._U = U
         if F_stiff is not None and F_non_stiff is not None:
@@ -47,10 +55,19 @@ class ConservationLaw:
         elif F_non_stiff is not None:
             self._F = F_non_stiff
         else:
-            self._F = dolfinx.fem.Constant(U.function_space.mesh, 0.0)
+            self._F = None
         self._F_stiff = F_stiff
         self._F_non_stiff = F_non_stiff
-        self._S = S
+        if S_stiff is not None and S_non_stiff is not None:
+            self._S = S_stiff + S_non_stiff
+        elif S_stiff is not None:
+            self._S = S_stiff
+        elif S_non_stiff is not None:
+            self._S = S_non_stiff
+        else:
+            self._S = None
+        self._S_stiff = S_stiff
+        self._S_non_stiff = S_non_stiff
 
         # Compute J symbolically
         # UFL requires a Variable wrapper for differentiation
@@ -133,17 +150,27 @@ class ConservationLaw:
     @property
     def J_stiff(self) -> ufl.core.expr.Expr:
         """ufl.core.expr.Expr: The stiff vector-valued flux Jacobian."""
-        return self._J
+        return self._J_stiff
 
     @property
     def J_non_stiff(self) -> ufl.core.expr.Expr:
         """ufl.core.expr.Expr: The non-stiff vector-valued flux Jacobian."""
-        return self._J
+        return self._J_non_stiff
 
     @property
     def S(self) -> ufl.core.expr.Expr:
-        """ufl.core.expr.Expr: A scalar-valued source expression."""
+        """ufl.core.expr.Expr: The total scalar-valued source."""
         return self._S
+
+    @property
+    def S_stiff(self) -> ufl.core.expr.Expr:
+        """ufl.core.expr.Expr: The stiff scalar-valued source."""
+        return self._S_stiff
+
+    @property
+    def S_non_stiff(self) -> ufl.core.expr.Expr:
+        """ufl.core.expr.Expr: The non-stiff scalar-valued source."""
+        return self._S_non_stiff
 
     def __str__(self):
         """Represent the equation as a string."""
