@@ -11,6 +11,7 @@ class Flux:
 
     Attributes:
         expression (ufl.core.expr.Expr): The flux expression.
+        jacobian_expression (ufl.core.expr.Expr): The flux Jacobian dF/dU.
         is_stiff (bool): Whether the term should be treated implicitly in
             implicit-explicit (IMEX) formulations.
         is_hyperbolic (bool): Whether the term is purely hyperbolic, or has
@@ -19,11 +20,12 @@ class Flux:
             alternating trace is used.
     """
 
-    def __init__(self, expression: ufl.core.expr.Expr, is_stiff: bool,
-        is_hyperbolic: bool):
+    def __init__(self, U: dolfinx.fem.Function, expression: ufl.core.expr.Expr,
+        is_stiff: bool, is_hyperbolic: bool):
         """Constructor.
 
         Arguments:
+            U (dolfinx.fem.Function): The conserved quantity.
             expression (ufl.core.expr.Expr): The flux expression.
             is_stiff (bool): Whether the term should be treated implicitly in
                 implicit-explicit (IMEX) formulations.
@@ -32,14 +34,33 @@ class Flux:
                 This is used by the LDG formulation to determine whether an
                 upwinded or alternating trace is used.
         """
+        self._U = U
         self._expression = expression
+        Uvar = ufl.variable(U)
+        self._jacobian_expression = ufl.replace(
+            ufl.diff(
+                ufl.replace(
+                    F_non_stiff,
+                    {U: Uvar}
+                ),
+                Uvar),
+            {Uvar: U}
+        )
         self._is_stiff = is_stiff
         self._is_hyperbolic = is_hyperbolic
+
+    @property
+    def U(self) -> dolfinx.fem.Function:
+        return self._U
 
     @property
     def expression(self) -> ufl.core.expr.Expr:
         """ufl.core.expr.Expr: The flux expression."""
         return self._expression
+
+    def jacobian_expression(self) -> ufl.core.expr.Expr:
+        "ufl.core.expr.Expr: The flux Jacobian dF/dU."
+        return self._jacobian_expression
 
     @property
     def is_stiff(self) -> bool:
@@ -110,9 +131,9 @@ class ConservationLaw:
             May be None.
     """
 
-    def __init__(self, U: dolfinx.fem.Function, F_stiff: ufl.core.expr.Expr = None,
-        F_non_stiff: ufl.core.expr.Expr = None, S_stiff: ufl.core.expr.Expr = None,
-        S_non_stiff: ufl.core.expr.Expr = None):
+    def __init__(self, U: dolfinx.fem.Function,
+        fluxes: list[Flux] | None = None,
+        sources: list[Source] | None = None):
         """Constructor.
 
         Arguments:
