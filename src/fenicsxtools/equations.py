@@ -128,9 +128,9 @@ class ConservationLaw:
         Arguments:
             U (dolfinx.fem.Function): The conserved quantity. This reference is
                 important for correctly constructing the solution method.
-            fluxes (ufl.core.expr.Expr, optional): A list of vector-valued
+            fluxes (list[Flux], optional): A list of vector-valued
                 fluxes. Default is None.
-            sources (ufl.core.expr.Expr, optional): A list of scalar-valued
+            sources (list[Source], optional): A list of scalar-valued
                 sources. Default is None.
         """
         self._U = U
@@ -143,13 +143,13 @@ class ConservationLaw:
         return self._U
 
     @property
-    def fluxes(self) -> ufl.core.expr.Expr:
-        """ufl.core.expr.Expr: A list of vector-valued fluxes. May be empty."""
+    def fluxes(self) -> list[Flux]:
+        """list[Flux]: A list of vector-valued fluxes. May be empty."""
         return self._fluxes
 
     @property
-    def sources(self) -> ufl.core.expr.Expr:
-        """ufl.core.expr.Expr: A list of scalar-valued sources. May be empty."""
+    def sources(self) -> list[Source]:
+        """list[Source]: A list of scalar-valued sources. May be empty."""
         return self._sources
 
 def get_constant_advection(domain: dolfinx.mesh.Mesh,
