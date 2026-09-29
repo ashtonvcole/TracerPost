@@ -40,7 +40,7 @@ class Flux:
         self._jacobian_expression = ufl.replace(
             ufl.diff(
                 ufl.replace(
-                    F_non_stiff,
+                    expression,
                     {U: Uvar}
                 ),
                 Uvar),
@@ -58,6 +58,7 @@ class Flux:
         """ufl.core.expr.Expr: The flux expression."""
         return self._expression
 
+    @property
     def jacobian_expression(self) -> ufl.core.expr.Expr:
         "ufl.core.expr.Expr: The flux Jacobian dF/dU."
         return self._jacobian_expression
@@ -135,7 +136,7 @@ class ConservationLaw:
         """
         self._U = U
         self._fluxes = fluxes if fluxes is not None else []
-        self._sources = sources if fluxes is not None else []
+        self._sources = sources if sources is not None else []
 
     @property
     def U(self) -> ufl.core.expr.Expr:
