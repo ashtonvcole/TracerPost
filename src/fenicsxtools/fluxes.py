@@ -203,9 +203,9 @@ def fluxn_llf_scalar(F: ufl.core.expr.Expr, U: dolfinx.fem.Function,
     """
     lam = ufl.max_value(
         abs(ufl.dot(J('+'), n('+'))), # Characteristic speed magnitude at +
-        abs(ufl.dot(J('+'), n('-'))) # Characteristic speed magnitude at -
+        abs(ufl.dot(J('-'), n('-'))) # Characteristic speed magnitude at -
     )
-    return ufl.dot(ufl.avg(F), n('+')) - lam * ufl.jump(U)
+    return ufl.dot(ufl.avg(F), n('+')) + 0.5 * lam * ufl.jump(U)
 
 def fluxn_llf_downwind_scalar(F: ufl.core.expr.Expr, U: dolfinx.fem.Function,
     J: ufl.core.expr.Expr, n: ufl.FacetNormal) -> ufl.core.operator.Operator:
@@ -236,6 +236,6 @@ def fluxn_llf_downwind_scalar(F: ufl.core.expr.Expr, U: dolfinx.fem.Function,
     """
     lam = ufl.max_value(
         abs(ufl.dot(J('+'), n('+'))), # Characteristic speed magnitude at +
-        abs(ufl.dot(J('+'), n('-'))) # Characteristic speed magnitude at -
+        abs(ufl.dot(J('-'), n('-'))) # Characteristic speed magnitude at -
     )
-    return ufl.dot(ufl.avg(F), n('+')) + lam * ufl.jump(U)
+    return ufl.dot(ufl.avg(F), n('+')) - 0.5 * lam * ufl.jump(U)
