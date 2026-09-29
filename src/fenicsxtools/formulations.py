@@ -104,25 +104,26 @@ class SemiDiscreteSystem:
             is dependent on a and b, b on a and c, and a on c, then the order
             is a, b.
     """
-    def __init__(self, equations: list[SemiDiscreteEquation],
+    def __init__(self, sdequations: list[SemiDiscreteEquation],
         lifts: list[SemiDiscreteEquation] | None = None):
         """Constructor.
 
         Arguments:
-            equations (list[SemiDiscreteEquation]): A list of differential and
+            sdequations (list[SemiDiscreteEquation]): A list of differential and
                 algebraic equations.
             lifts (list[SemiDiscreteEquation], optional): A list of intermediate
                 variable lifts, provided in dependency order. E.g., if the
                 equation for c is dependent on a and b, b on a and c, and a on
                 c, then the order is a, b. Default is None.
         """
-        self._equations = equations
+        self._sdequations = sdequations
         self._lifts = lifts
 
     @property
     def sdequations(self) -> list[SemiDiscreteEquation]:
-        return self._equations
+        return self._sdequations
 
+    @property
     def lifts(self) -> list[SemiDiscreteEquation] | None:
         return self._lifts
 
@@ -154,47 +155,51 @@ class SemiDiscreteSystem:
         # Construct mass form
         bilinear_form = xi * phi * ufl.dx
 
-        stiff_residual_form = None
-        non_stiff_residual_form = None
+        # Construct residual forms
+        stiff_residual_forms = []
+        non_stiff_residual_forms = []
 
         # Flux contributions
         for flux in equation.fluxes:
-            if flux.is_stiff:
-                # Volume integral
-                stiff_residual_form += ufl.dot(flux.expression,
-                    ufl.grad(phi)) * ufl.dx
+            # Volume integral
+            residual_form = ufl.dot(flux.expression,
+                ufl.grad(phi)) * ufl.dx
 
-                # Exterior boundary contribution
-                stiff_residual_form += -ufl.conditional(
+            # Exterior boundary contribution
+            if flux.is_hyperbolic:
+                residual_form += -ufl.conditional(
                     ufl.dot(flux.jacobian_expression, n) > 0.0,
                     ufl.dot(flux.expression, n),
                     dolfinx.fem.Constant(domain, 0.0)
                 ) * phi * ufl.ds
             else:
-                # Volume integral
-                non_stiff_residual_form += ufl.dot(flux.expression,
-                    ufl.grad(phi)) * ufl.dx
+                # Neglect parabolic terms on the boundary
+                pass
 
-                # Exterior boundary contribution
-                non_stiff_residual_form += -ufl.conditional(
-                    ufl.dot(flux.jacobian_expression, n) > 0.0,
-                    ufl.dot(flux.expression, n),
-                    dolfinx.fem.Constant(domain, 0.0)
-                ) * phi * ufl.ds
+            # Add the individual flux to the correct residual
+            if flux.is_stiff:
+                stiff_residual_forms.append(residual_form)
+            else:
+                non_stiff_residual_forms.append(residual_form)
 
         # Source contributions
         for source in equation.sources:
+            residual_form = source.expression * phi * ufl.dx
             if source.is_stiff:
-                stiff_residual_form += source.expression * phi * ufl.dx
+                stiff_residual_forms.append(residual_form)
             else:
-                non_stiff_residual_form += source.expression * phi * ufl.dx
+                non_stiff_residual_forms.append(residual_form)
 
         sd_equation = SemiDiscreteEquation(
             variable=equation.U,
             is_differential=True,
             bilinear_form=bilinear_form,
-            stiff_residual_form=stiff_residual_form,
-            non_stiff_residual_form=non_stiff_residual_form,
+            stiff_residual_form=sum(stiff_residual_forms)
+                if len(stiff_residual_forms) != 0
+                else None,
+            non_stiff_residual_form=sum(non_stiff_residual_forms)
+                if len(non_stiff_residual_forms) != 0
+                else None,
             is_bilinear_form_constant=True
         )
         return cls([sd_equation], None)
@@ -231,74 +236,91 @@ class SemiDiscreteSystem:
         # Construct mass form
         bilinear_form = xi * phi * ufl.dx
 
-        # Construct stiff residual form
-        stiff_residual_form = None
-        non_stiff_residual_form = None
-        jacobians = None
+        # Construct residual forms
+        stiff_residual_forms = []
+        non_stiff_residual_forms = []
+
+        # Fluxes are accumulated
+        stiff_fluxes = []
+        stiff_jacobians = []
+        non_stiff_fluxes = []
+        non_stiff_jacobians = []
 
         # Flux contributions
         for flux in equation.fluxes:
+            # For readability
+            F = flux.expression
+            J = flux.jacobian_expression
+
+            # Volume integral
+            residual_form = ufl.dot(F,
+                ufl.grad(phi)) * ufl.dx
+
+            # Interior boundary contributions
             if flux.is_stiff:
-                # Volume integral
-                stiff_residual_form += ufl.dot(flux.expression,
-                    ufl.grad(phi)) * ufl.dx
+                stiff_fluxes.append(F)
+                stiff_jacobians.append(J)
+            else:
+                non_stiff_fluxes.append(F)
+                non_stiff_jacobians.append(J)
 
-                # Interior boundary contributions
-                # Accumulate jacobians for now
-                jacobians += flux.jacobian_expression
-
-                # Exterior boundary contribution
-                stiff_residual_form += -ufl.conditional(
-                    ufl.dot(equation.J_stiff, n) > 0.0,
-                    ufl.dot(equation.F_stiff, n),
+            # Exterior boundary contribution
+            if flux.is_hyperbolic:
+                residual_form += -ufl.conditional(
+                    ufl.dot(J, n) > 0.0,
+                    ufl.dot(F, n),
                     dolfinx.fem.Constant(domain, 0.0)
                 ) * phi * ufl.ds
             else:
-                # Volume integral
-                non_stiff_residual_form += ufl.dot(flux.expression,
-                    ufl.grad(phi)) * ufl.dx
+                # Neglect parabolic terms on the boundary
+                pass
 
-                # Interior boundary contributions
-                # Accumulate jacobians for now
-                jacobians += flux.jacobian_expression
-
-                # Exterior boundary contribution
-                non_stiff_residual_form += -ufl.conditional(
-                    ufl.dot(equation.J_stiff, n) > 0.0,
-                    ufl.dot(equation.F_stiff, n),
-                    dolfinx.fem.Constant(domain, 0.0)
-                ) * phi * ufl.ds
-
-        # Interior boundary contributions
-        for flux in equation.fluxes:
+            # Add the individual flux to the correct residual
             if flux.is_stiff:
-                stiff_residual_form += -trace_function(
-                    flux.expression,
-                    equation.U,
-                    jacobians,
-                    n
-                ) * ufl.jump(phi) * ufl.dS
+                stiff_residual_forms.append(residual_form)
             else:
-                non_stiff_residual_form += -trace_function(
-                    flux.expression,
-                    equation.U,
-                    jacobians,
-                    n
-                ) * ufl.jump(phi) * ufl.dS
+                non_stiff_residual_forms.append(residual_form)
+
+        # Revisit interior boundary contributions
+        if len(stiff_fluxes) > 0:
+            F = sum(stiff_fluxes)
+            J = sum(stiff_jacobians)
+            residual_form = -trace_function(
+                F,
+                equation.U,
+                J,
+                n
+            ) * ufl.jump(phi) * ufl.dS
+            stiff_residual_forms.append(residual_form)
+        if len(non_stiff_fluxes) > 0:
+            F = sum(non_stiff_fluxes)
+            J = sum(non_stiff_jacobians)
+            residual_form = -trace_function(
+                F,
+                equation.U,
+                J,
+                n
+            ) * ufl.jump(phi) * ufl.dS
+            non_stiff_residual_forms.append(residual_form)
 
         # Source contributions
         for source in equation.sources:
+            residual_form = source.expression * phi * ufl.dx
             if source.is_stiff:
-                stiff_residual_form += source.expression * phi * ufl.dx
+                stiff_residual_forms.append(residual_form)
             else:
-                non_stiff_residual_form += source.expression * phi * ufl.dx
+                non_stiff_residual_forms.append(residual_form)
 
         sd_equation = SemiDiscreteEquation(
             variable=equation.U,
             is_differential=True,
             bilinear_form=bilinear_form,
-            stiff_residual_form=stiff_residual_form,
-            non_stiff_residual_form=non_stiff_residual_form,
+            stiff_residual_form=sum(stiff_residual_forms)
+                if len(stiff_residual_forms) != 0
+                else None,
+            non_stiff_residual_form=sum(non_stiff_residual_forms)
+                if len(non_stiff_residual_forms) != 0
+                else None,
             is_bilinear_form_constant=True
         )
         return cls([sd_equation], None)
@@ -307,7 +329,7 @@ class SemiDiscreteSystem:
     def using_LDG(cls, equation: equations.ConservationLaw,
         grad_of: ufl.core.expr.Expr,
         space_auxiliary: dolfinx.fem.FunctionSpace,
-        trace_function_upwind, trace_function_downwind) -> 'SemiDiscreteSystem':
+        trace_function, beta: float) -> 'SemiDiscreteSystem':
         """Create a semi-discrete system of equations using the Local Discontinuous
         Galerkin method.
 
@@ -322,6 +344,8 @@ class SemiDiscreteSystem:
         r . psi * dx = - grad_of * div(psi) * dx + trace(grad_of) * jump(psi) . n *
             dS + grad_of * psi . n * ds
 
+        Here, trace refers both to hyperbolic flux solvers and parabolic alternation.
+
         Arguments:
             equation (equations.ConservationLaw): The conservation law being
                 solved for.
@@ -329,12 +353,10 @@ class SemiDiscreteSystem:
                 using an auxiliary variable.
             space_auxiliary (dolfinx.fem.FunctionSpace): The function space used to
                 weakly enforce the gradient term.
-            trace_function_upwind (callable): The upwind flux solver being used at
-                element interfaces to resolve discontinuities. The function
-                signature should be trace_function(F, U, J, n).
-            trace_function_downwind (callable): The downwind flux solver being used at
-                element interfaces to resolve discontinuities. The function
-                signature should be trace_function(F, U, J, n).
+            trace_function (callable): The flux solver being used at element
+                interfaces to resolve discontinuities. The function signature
+                should be trace_function(F, U, J, n).
+            beta (float): A constant used for LDG flux alternation.
         """
         # Preliminaries
         space = equation.U.function_space
@@ -346,118 +368,126 @@ class SemiDiscreteSystem:
         g = dolfinx.fem.Function(space_auxiliary) # Auxiliary lifting variable
         n = ufl.FacetNormal(domain)
 
-        # Replace gradient in flux/source with auxiliary variable
-        # Leave the ConservationLaw unchanged
-        # Pass the result to local variables
-        F_stiff = None
-        F_non_stiff = None
-        J_stiff = None
-        J_non_stiff = None
-        S_stiff = None
-        S_non_stiff = None
-        if equation.F_stiff is not None:
-            F_stiff = ufl.replace(
-                equation.F_stiff,
-                {ufl.grad(grad_of): g}
-            )
-            J_stiff = ufl.replace(
-                equation.J_stiff,
-                {ufl.grad(grad_of): g}
-            )
-        if equation.F_non_stiff is not None:
-            F_non_stiff = ufl.replace(
-                equation.F_non_stiff,
-                {ufl.grad(grad_of): g}
-            )
-            J_non_stiff = ufl.replace(
-                equation.J_non_stiff,
-                {ufl.grad(grad_of): g}
-            )
-        if equation.S_stiff is not None:
-            S_stiff = ufl.replace(
-                equation.S_stiff,
-                {ufl.grad(grad_of): g}
-            )
-        if equation.S_non_stiff is not None:
-            S_non_stiff = ufl.replace(
-                equation.S_non_stiff,
-                {ufl.grad(grad_of): g}
-            )
-
         # Begin with differential equation
         # Construct mass form
         bilinear_form = xi * phi * ufl.dx
 
-        # Construct stiff residual form
-        stiff_residual_form = None
-        if F_stiff is not None:
+        # Construct residual forms
+        stiff_residual_forms = []
+        non_stiff_residual_forms = []
+
+        # Non-alternating fluxes are accumulated
+        stiff_hyperbolic_fluxes = []
+        stiff_hyperbolic_jacobians = []
+        non_stiff_hyperbolic_fluxes = []
+        non_stiff_hyperbolic_jacobians = []
+
+        # Flux contributions
+        for flux in equation.fluxes:
+            # Replace gradient in flux/source with auxiliary variable
+            # Leave the ConservationLaw unchanged
+            F = ufl.replace(
+                flux.expression,
+                {ufl.grad(grad_of): g}
+            )
+            J = ufl.replace(
+                flux.jacobian_expression,
+                {ufl.grad(grad_of): g}
+            )
+
+            # Sanity check
+            # Make sure parabolic terms get replaced appropriately
+            if flux.is_hyperbolic:
+               assert g in ufl.algorithms.extract_coefficients(F)
+
             # Volume integral
-            stiff_residual_form = ufl.dot(F_stiff,
+            residual_form = ufl.dot(F,
                 ufl.grad(phi)) * ufl.dx
 
             # Interior boundary contribution
-            stiff_residual_form += -trace_function_upwind(
-                F_stiff,
-                equation.U,
-                J_stiff,
-                n
-            ) * ufl.jump(phi) * ufl.dS
+            if flux.is_hyperbolic:
+                # Use normal flux solver
+                if flux.is_stiff:
+                    stiff_hyperbolic_fluxes.append(F)
+                    stiff_hyperbolic_jacobians.append(J)
+                else:
+                    non_stiff_hyperbolic_fluxes.append(F)
+                    non_stiff_hyperbolic_jacobians.append(J)
+            else:
+                # Use LDG alternation
+                residual_form += -(
+                    ufl.dot(ufl.avg(F), n('+'))
+                    + beta * ufl.jump(F, n)
+                ) * ufl.jump(phi) * ufl.dS
 
             # Exterior boundary contribution
-            stiff_residual_form += -ufl.conditional(
-                ufl.dot(J_stiff, n) > 0.0,
-                ufl.dot(F_stiff, n),
-                dolfinx.fem.Constant(domain, 0.0)
-            ) * phi * ufl.ds
-
-        # Stiff source contribution
-        # Add to existing or set from None
-        if S_stiff is not None:
-            if stiff_residual_form is not None:
-                stiff_residual_form += S_stiff * phi * ufl.dx
+            if flux.is_hyperbolic:
+                residual_form += -ufl.conditional(
+                    ufl.dot(J, n) > 0.0,
+                    ufl.dot(F, n),
+                    dolfinx.fem.Constant(domain, 0.0)
+                ) * phi * ufl.ds
             else:
-                stiff_residual_form = S_stiff * phi * ufl.dx
+                # Neglect parabolic terms on the boundary
+                pass
 
-        # Construct non-stiff residual form
-        non_stiff_residual_form = None
-        if F_non_stiff is not None:
-            # Volume integral
-            non_stiff_residual_form = ufl.dot(F_non_stiff,
-                ufl.grad(phi)) * ufl.dx
+            # Add the individual flux to the correct residual
+            if flux.is_stiff:
+                stiff_residual_forms.append(residual_form)
+            else:
+                non_stiff_residual_forms.append(residual_form)
 
-            # Interior boundary contribution
-            non_stiff_residual_form += -trace_function_upwind(
-                F_non_stiff,
+        # Revisit interior boundary contributions
+        if len(stiff_hyperbolic_fluxes) > 0:
+            F = sum(stiff_hyperbolic_fluxes)
+            J = sum(stiff_hyperbolic_jacobians)
+            residual_form = -trace_function(
+                F,
                 equation.U,
-                J_non_stiff,
+                J,
                 n
             ) * ufl.jump(phi) * ufl.dS
+            stiff_residual_forms.append(residual_form)
+        if len(non_stiff_hyperbolic_fluxes) > 0:
+            F = sum(non_stiff_hyperbolic_fluxes)
+            J = sum(non_stiff_hyperbolic_jacobians)
+            residual_form = -trace_function(
+                F,
+                equation.U,
+                J,
+                n
+            ) * ufl.jump(phi) * ufl.dS
+            non_stiff_residual_forms.append(residual_form)
 
-            # Exterior boundary contribution
-            non_stiff_residual_form += -ufl.conditional(
-                ufl.dot(J_non_stiff, n) > 0.0,
-                ufl.dot(F_non_stiff, n),
-                dolfinx.fem.Constant(domain, 0.0)
-            ) * phi * ufl.ds
-
-        # Non-stiff source contribution
-        # Add to existing or set from None
-        if S_non_stiff is not None:
-            if non_stiff_residual_form is not None:
-                non_stiff_residual_form += S_non_stiff * phi * ufl.dx
+        # Source contributions
+        for source in equation.sources:
+            # Replace gradient in flux/source with auxiliary variable
+            # Leave the ConservationLaw unchanged
+            S = ufl.replace(
+                source.expression,
+                {ufl.grad(grad_of): g}
+            )
+            residual_form = S * phi * ufl.dx
+            if source.is_stiff:
+                stiff_residual_forms.append(residual_form)
             else:
-                non_stiff_residual_form = S_non_stiff * phi * ufl.dx
+                non_stiff_residual_forms.append(residual_form)
 
         differential_equation = SemiDiscreteEquation(
             variable=equation.U,
             is_differential=True,
             bilinear_form=bilinear_form,
-            stiff_residual_form=stiff_residual_form,
-            non_stiff_residual_form=non_stiff_residual_form,
+            stiff_residual_form=sum(stiff_residual_forms)
+                if len(stiff_residual_forms) != 0
+                else None,
+            non_stiff_residual_form=sum(non_stiff_residual_forms)
+                if len(non_stiff_residual_forms) != 0
+                else None,
             is_bilinear_form_constant=True
         )
 
         # Now create the lift equation
+        # Construct mass form
         bilinear_form = ufl.dot(chi, psi) * ufl.dx
 
         # Construct non-stiff residual only
@@ -467,20 +497,10 @@ class SemiDiscreteSystem:
         non_stiff_residual_form = -grad_of * ufl.div(psi) * ufl.dx
 
         # Interior boundary contribution
-        if J_stiff is not None:
-            non_stiff_residual_form += trace_function_downwind(
-                grad_of,
-                equation.U,
-                equation.J_stiff,
-                n
-            ) * ufl.jump(psi, n) * ufl.dS
-        if J_non_stiff is not None:
-            non_stiff_residual_form += trace_function_downwind(
-                grad_of,
-                equation.U,
-                equation.J_non_stiff,
-                n
-            ) * ufl.jump(psi, n) * ufl.dS
+        non_stiff_residual_form += (
+            ufl.avg(grad_of)
+            - beta * ufl.jump(grad_of)
+        ) * ufl.jump(psi, n) * ufl.dS
 
         # Exterior boundary contribution
         non_stiff_residual_form += grad_of * ufl.dot(psi, n) * ufl.ds
