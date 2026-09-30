@@ -153,6 +153,21 @@ class ConservationLaw:
         """list[Source]: A list of scalar-valued sources. May be empty."""
         return self._sources
 
+    def __str__(self):
+        """Represent the equation as a string."""
+        U = ufl.formatting.ufl2unicode.ufl2unicode(self._U)
+        F = ufl.formatting.ufl2unicode.ufl2unicode(
+            ufl.algorithms.ad.expand_derivatives(sum(
+                [flux.expression for flux in self.fluxes]
+            ))
+        ) if self.fluxes is not None and len(self.fluxes) > 0 else '0'
+        S = ufl.formatting.ufl2unicode.ufl2unicode(
+            ufl.algorithms.ad.expand_derivatives(sum(
+                [source.expression for source in self.sources]
+            ))
+        ) if self.sources is not None and len(self.sources) > 0 else '0'
+        return f'd{U}/dt + div({F}) = {S}'
+
 def get_constant_advection(domain: dolfinx.mesh.Mesh,
     U: dolfinx.fem.Function, v: float | tuple) -> ConservationLaw:
     """Get constant- and homogeneous-coefficient scalar advection problem.
