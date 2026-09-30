@@ -397,7 +397,7 @@ class SemiDiscreteSystem:
 
             # Sanity check
             # Make sure parabolic terms get replaced appropriately
-            if flux.is_hyperbolic:
+            if not flux.is_hyperbolic:
                assert g in ufl.algorithms.extract_coefficients(F)
 
             # Volume integral
