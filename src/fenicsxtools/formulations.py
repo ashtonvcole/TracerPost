@@ -28,6 +28,9 @@ class SemiDiscreteEquation:
         non_stiff_residual_form (ufl.Form): A non-stiff component of the
             residual, marked for explicit treatment in an IMEX solver. This
             should be linear in the test function. May be None.
+        is_bilinear_form_constant (bool): Whether the bilinear form is constant
+            in time. This impacts whether matrices need to be re-formed at every
+            time step, which is an expensive operation.
     """
     def __init__(self, variable: dolfinx.fem.Function, is_differential: bool,
         bilinear_form: ufl.Form,
@@ -85,12 +88,28 @@ class SemiDiscreteEquation:
         return self._bilinear_form
 
     @property
-    def stiff_residual_form(self):
+    def stiff_residual_form(self) -> ufl.Form | None:
+        """ufl.Form: A stiff component of the residual, marked for implicit
+        treatment in an IMEX solver. This should be linear in the test function.
+        May be None.
+        """
         return self._stiff_residual_form
 
     @property
-    def non_stiff_residual_form(self):
+    def non_stiff_residual_form(self) -> ufl.Form | None:
+        """ufl.Form: A non-stiff component of the residual, marked for explicit
+        treatment in an IMEX solver. This should be linear in the test function.
+        May be None.
+        """
         return self._non_stiff_residual_form
+
+    @property
+    def is_bilinear_form_constant(self) -> bool:
+        """bool: Whether the bilinear form is constant in time. This impacts
+        whether matrices need to be re-formed at every time step, which is an
+        expensive operation.
+        """
+        return self._is_bilinear_form_constant
 
 class SemiDiscreteSystem:
     """Abstraction for  a semi-discrete system of equations found in FEM
