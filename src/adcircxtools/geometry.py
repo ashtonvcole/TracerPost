@@ -51,3 +51,33 @@ def central_angle(lon1: float | numpy.ndarray, lat1: float | numpy.ndarray,
     if use_deg:
         theta = numpy.rad2deg(theta)
     return theta
+
+def cpp(coord: numpy.ndarray, lon0: float, lat0: float, R: float,
+    use_deg: bool = True) -> numpy.ndarray:
+    """Carte parallelogrammatique projection used in ADCIRC and DGSWEM.
+
+    x = R * (lon - lon0) * cos(lat0)
+
+    y = R * lat
+
+    Arguments:
+        coord (numpy.ndarray): The list of longitudes and latitudes to be
+            projected. Of shape (num_coord, 2).
+        lon0 (float): The longitude of the center of the projection.
+        lat0 (float): The latitude of the center of the projection.
+        R (float): The radius of the sphere used for projection.
+        use_deg (bool, optional): Whether the inputs are provided in degrees. If
+            True, the coordinates will be converted to radians for the
+            projection. Default is True.
+
+    Returns:
+        numpy.ndarray
+    """
+    if use_deg:
+        coord = numpy.deg2rad(coord)
+        lon0 = numpy.deg2rad(lon0)
+        lat0 = numpy.deg2rad(lat0)
+    projected_coord = numpy.zeros(coord.shape)
+    projected_coord[:, 0] = R * (coord[:, 0] - lon0) * numpy.cos(lat0)
+    projected_coord[:, 1] = R * coord[:, 1]
+    return projected_coord
