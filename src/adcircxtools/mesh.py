@@ -616,7 +616,7 @@ class Mesh:
         """Generate a new mesh by coordinate filter.
 
         Arguments:
-            coordinate_filter: Callable[[float, float], bool]: A filter that
+            coordinate_filter (Callable[[float, float], bool]): A filter that
                 takes in the 2D coordinates and returns a boolean.
 
         Returns:
@@ -672,3 +672,15 @@ class Mesh:
             node_indices,
             element_indices
         )
+
+    def project(self, projection) -> 'Mesh':
+        """Generate a new mesh with projected coordinates.
+
+        Arguments:
+            projection (callable): A function that takes in the coordinate array
+                and transforms it to another coordinate system.
+
+        Returns:
+            Mesh: A mesh object with the projected coordinates.
+        """
+        return type(self)(projection(self.coordinates), self.elements)
