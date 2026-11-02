@@ -8,6 +8,7 @@ dependencies:
   - scipy
   - matplotlib
   - mpich
+  - numpy
   - pyvista
   - jupyterlab
   - imageio
