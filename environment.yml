@@ -1,4 +1,4 @@
-name: fenicsx-env
+name: tracer-post-env
 channels:
   - conda-forge
 dependencies:
