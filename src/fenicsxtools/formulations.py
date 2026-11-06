@@ -245,7 +245,7 @@ class SemiDiscreteSystem:
 
     @classmethod
     def using_DG(cls, equation: equations.ConservationLaw,
-        trace_function) -> 'SemiDiscreteSystem':
+        trace_function, boundary_state = None) -> 'SemiDiscreteSystem':
         """Create a semi-discrete system of equations using the Discontinuous
         Galerkin method.
 
@@ -264,6 +264,8 @@ class SemiDiscreteSystem:
             trace_function (callable): The flux solver being used at element
                 interfaces to resolve discontinuities. The function signature
                 should be trace_function(F, U, J, n).
+            boundary_state (optional): Temporary inflow boundary
+                condition implementation. Default is None.
         """
         # Preliminaries
         space = equation.U.function_space
@@ -308,7 +310,9 @@ class SemiDiscreteSystem:
                 residual_form += -ufl.conditional(
                     ufl.dot(J, n) > 0.0,
                     ufl.dot(F, n),
-                    dolfinx.fem.Constant(domain, 0.0)
+                    (ufl.replace(ufl.dot(F, n), {equation.U: boundary_state})
+                        if boundary_state is not None
+                        else dolfinx.fem.Constant(domain, 0.0))
                 ) * phi * ufl.ds
             else:
                 # Neglect parabolic terms on the boundary

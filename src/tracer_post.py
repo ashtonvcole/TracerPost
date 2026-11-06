@@ -24,6 +24,7 @@ import os
 from petsc4py import PETSc
 import scipy.spatial
 import sys
+import ufl
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,8 +46,9 @@ def parse_args() -> argparse.Namespace:
     g.add_argument('--fort64', required=True,
         help='ADCIRC velocity time series (fort.64).')
     g.add_argument('--fort63', default=None,
-        help='ADCIRC elevation time series (fort.63). Required to output '
-             'c = iota / h (h = zeta + DP).')
+        help='ADCIRC elevation time series (fort.63). Required: gives the '
+             'inflow boundary state iota = c h and the output c = iota / h '
+             '(h = zeta + DP).')
 
     g = p.add_argument_group('projection')
     g.add_argument('--radius-earth', type=float, default=6378206.4,
@@ -110,8 +112,8 @@ def parse_args() -> argparse.Namespace:
     args = p.parse_args()
     if args.diffusivity != 0.0:
         p.error('diffusion is not implemented; --diffusivity must be 0')
-    if 'c' in args.output_fields and args.fort63 is None:
-        p.error('--output-fields c requires --fort63')
+    if args.fort63 is None:
+        p.error('--fort63 is required: the inflow boundary state is c h')
     return args
 
 
@@ -260,17 +262,18 @@ def main():
         adx.read_function(args.ic_bp or args.mesh, iota, name=args.ic_name)
     iota.x.scatter_forward()
 
-    # Output fields: c = iota / h requires h = zeta + DP
+    # Total depth h = zeta + DP is needed for the inflow boundary state
+    # (iota = c h) and for the output field c = iota / h
     want_c = 'c' in args.output_fields
+    dp_cg = dx.fem.Function(
+        dx.fem.functionspace(domain, ('Lagrange', 1)))
+    adx.read_function(args.mesh, dp_cg, name=args.bathymetry_name)
+    dp = dx.fem.Function(V)
+    dp.interpolate(dp_cg)
     if want_c:
-        dp_cg = dx.fem.Function(
-            dx.fem.functionspace(domain, ('Lagrange', 1)))
-        adx.read_function(args.mesh, dp_cg, name=args.bathymetry_name)
-        dp = dx.fem.Function(V)
-        dp.interpolate(dp_cg)
         c = dx.fem.Function(V, name='c')
 
-    # fort.63 is only needed to convert iota to c (iota = c h is conserved)
+    # fort.63 supplies zeta for the inflow boundary state and for c = iota / h
     # Only rank 0 touches the files
     velocity_buffer = None
     elevation_buffer = None
@@ -278,15 +281,13 @@ def main():
         log.info('Loading ADCIRC data buffers...')
         velocity_buffer = at.io.TimeSeriesBuffer(args.fort64)
         velocity_buffer.open()
-        if want_c:
-            elevation_buffer = at.io.TimeSeriesBuffer(args.fort63)
-            elevation_buffer.open()
+        elevation_buffer = at.io.TimeSeriesBuffer(args.fort63)
+        elevation_buffer.open()
     try:
         velocity = NodalTimeSeriesField(W, comm, velocity_buffer,
             triangulation, kd, interp_node_mask, args.velocity_scale)
-        if want_c:
-            elevation = NodalTimeSeriesField(V, comm, elevation_buffer,
-                triangulation, kd, interp_node_mask, 1.0)
+        elevation = NodalTimeSeriesField(V, comm, elevation_buffer,
+            triangulation, kd, interp_node_mask, 1.0)
 
         # Conservation law and semi-discrete DG system
         log.info('Building system...')
@@ -297,7 +298,8 @@ def main():
         )
         system = ft.formulations.SemiDiscreteSystem.using_DG(
             equation=equation,
-            trace_function=ft.fluxes.fluxn_upwind_scalar
+            trace_function=ft.fluxes.fluxn_upwind_scalar,
+            boundary_state=ufl.max_value(elevation.v + dp, 0.0)  # iota_ext = c h, c = 1
         )
         solver = ft.solvers.TSSolver.from_SemiDiscreteSystem(system, 'explicit')
 
@@ -321,7 +323,7 @@ def main():
                 dx.fem.petsc.assign(uu, iota)
                 iota.x.scatter_forward()
                 if want_c:
-                    elevation.update(tt)
+                    # elevation.update(tt)
                     # Total depth; ADCIRC dry-node flags are clipped by h_min
                     h = elevation.v.x.array + dp.x.array
                     wet = h >= args.h_min
@@ -332,7 +334,9 @@ def main():
             solver.ts.setMonitor(monitor)
 
             def pre_step(ts):
-                velocity.update(ts.getTime())
+                tt = ts.getTime()
+                elevation.update(tt)
+                velocity.update(tt)
             solver.ts.setPreStep(pre_step)
 
             solver.ts.setFromOptions()
