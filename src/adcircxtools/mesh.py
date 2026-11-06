@@ -611,6 +611,62 @@ class Mesh:
         elements = numpy.searchsorted(adcirc_mesh.JN, adcirc_mesh.NM)
         return cls(coordinates=coordinates, elements=elements)
 
+    def filter_by_mask(self, node_mask: numpy.ndarray[numpy.bool_]) -> tuple['Mesh',
+        numpy.ndarray, numpy.ndarray]:
+        """Generate a new mesh from a boolean mask on the nodes.
+
+        Arguments:
+            node_mask (Callable[[float, float], bool]): A filter that
+                takes in the 2D coordinates and returns a boolean.
+
+        Returns:
+            tuple[Mesh, numpy.ndarray, numpy.ndarray]
+            Mesh: A mesh for which all nodes and elements are contained within
+                the filter. This should be able to be applied to numpy.ndarrays
+                in a vectorized manner.
+            numpy.ndarray: A mapping from the old mesh nodes indices to the
+                filtered mesh node indices. Filtered nodes are -1.
+            numpy.ndarray: A mapping from the old mesh element indices to the
+                filtered mesh element indices. Filtered elements are -1.
+        """
+        # Figure out which elements are in range,
+        # i.e. every node is in range
+        mask_elements_in_filter = (
+            node_mask[self.elements[:, 0]] &
+            node_mask[self.elements[:, 1]] &
+            node_mask[self.elements[:, 2]]
+        )
+
+        # Figure out which nodes are associated with a filtered element
+        # Sometimes there are orphan nodes, whose neighbors are all out of range
+        nodes_in_filtered_elements = numpy.unique(
+            self.elements[mask_elements_in_filter]
+        )
+        mask_nodes_in_elements = numpy.isin(
+            numpy.arange(self.num_nodes), # Implicit node indices
+            nodes_in_filtered_elements
+        )
+
+        # Create new coordinates array
+        mask_nodes = node_mask & mask_nodes_in_elements
+        filtered_coordinates = self.coordinates[mask_nodes]
+
+        # Create new elements array
+        # Indices should also be renumbered appropriately
+        filtered_elements = self.elements[mask_elements_in_filter]
+        node_indices = numpy.cumsum(mask_nodes) - 1 # Renumbering
+        node_indices[~mask_nodes] = -1
+        filtered_elements = node_indices[filtered_elements]
+        element_indices = numpy.cumsum(mask_elements_in_filter) # Renumbering
+        element_indices[~mask_elements_in_filter] = -1
+
+        # Construct a new object from the result
+        return (
+            type(self)(filtered_coordinates, filtered_elements),
+            node_indices,
+            element_indices
+        )
+
     def filter_by_coordinates(self, coordinate_filter) -> tuple['Mesh',
         numpy.ndarray, numpy.ndarray]:
         """Generate a new mesh by coordinate filter.
@@ -634,44 +690,8 @@ class Mesh:
             self.coordinates[:, 0],
             self.coordinates[:, 1]
         )
-
-        # Figure out which elements are in range,
-        # i.e. every node is in range
-        mask_elements_in_filter = (
-            mask_nodes_in_filter[self.elements[:, 0]] &
-            mask_nodes_in_filter[self.elements[:, 1]] &
-            mask_nodes_in_filter[self.elements[:, 2]]
-        )
-
-        # Figure out which nodes are associated with a filtered element
-        # Sometimes there are orphan nodes, whose neighbors are all out of range
-        nodes_in_filtered_elements = numpy.unique(
-            self.elements[mask_elements_in_filter]
-        )
-        mask_nodes_in_elements = numpy.isin(
-            numpy.arange(self.num_nodes), # Implicit node indices
-            nodes_in_filtered_elements
-        )
-
-        # Create new coordinates array
-        mask_nodes = mask_nodes_in_filter & mask_nodes_in_elements
-        filtered_coordinates = self.coordinates[mask_nodes]
-
-        # Create new elements array
-        # Indices should also be renumbered appropriately
-        filtered_elements = self.elements[mask_elements_in_filter]
-        node_indices = numpy.cumsum(mask_nodes) - 1 # Renumbering
-        node_indices[~mask_nodes] = -1
-        filtered_elements = node_indices[filtered_elements]
-        element_indices = numpy.cumsum(mask_elements_in_filter) # Renumbering
-        element_indices[~mask_elements_in_filter] = -1
-
-        # Construct a new object from the result
-        return (
-            type(self)(filtered_coordinates, filtered_elements),
-            node_indices,
-            element_indices
-        )
+        return self.filter_by_mask(mask_nodes_in_filter)
+    
 
     def project(self, projection) -> 'Mesh':
         """Generate a new mesh with projected coordinates.
