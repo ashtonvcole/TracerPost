@@ -31,12 +31,16 @@ class SemiDiscreteEquation:
         is_bilinear_form_constant (bool): Whether the bilinear form is constant
             in time. This impacts whether matrices need to be re-formed at every
             time step, which is an expensive operation.
+        mass_solver_options (dict): PETSc solver options based on the
+            structure of the resultant matrix from the function spaces and
+            solution method.
     """
     def __init__(self, variable: dolfinx.fem.Function, is_differential: bool,
         bilinear_form: ufl.Form,
         stiff_residual_form: ufl.Form | None = None,
         non_stiff_residual_form: ufl.Form | None = None,
-        is_bilinear_form_constant: bool = False):
+        is_bilinear_form_constant: bool = False,
+        mass_solver_options: dict | None = None):
         """Constructor.
 
         Arguments:
@@ -58,6 +62,9 @@ class SemiDiscreteEquation:
                 form is constant in time. This impacts whether matrices need to
                 be re-formed at every time step, which is an expensive
                 operation. Default is False.
+            mass_solver_options (dict, optional): PETSc solver options based on
+                the structure of the resultant matrix from the function spaces
+                and solution method. Default is None.
         """
         self._variable = variable
         self._is_differential = is_differential
@@ -65,6 +72,7 @@ class SemiDiscreteEquation:
         self._stiff_residual_form = stiff_residual_form
         self._non_stiff_residual_form = non_stiff_residual_form
         self._is_bilinear_form_constant = is_bilinear_form_constant
+        self._mass_solver_options = mass_solver_options or {}
 
     @property
     def variable(self) -> dolfinx.fem.Function:
@@ -110,6 +118,13 @@ class SemiDiscreteEquation:
         expensive operation.
         """
         return self._is_bilinear_form_constant
+
+    @property
+    def mass_solver_options(self) -> dict:
+        """dict: PETSc solver options based on the structure of the resultant
+        matrix from the function spaces and solution method.
+        """
+        return self._mass_solver_options
 
 class SemiDiscreteSystem:
     """Abstraction for  a semi-discrete system of equations found in FEM
@@ -219,7 +234,12 @@ class SemiDiscreteSystem:
             non_stiff_residual_form=sum(non_stiff_residual_forms)
                 if len(non_stiff_residual_forms) != 0
                 else None,
-            is_bilinear_form_constant=True
+            is_bilinear_form_constant=True,
+            mass_solver_options={
+                'ksp_type': 'cg',
+                'pc_type': 'jacobi',
+                'ksp_rtol': 1e-12
+            }
         )
         return cls([sd_equation], None)
 
@@ -340,7 +360,13 @@ class SemiDiscreteSystem:
             non_stiff_residual_form=sum(non_stiff_residual_forms)
                 if len(non_stiff_residual_forms) != 0
                 else None,
-            is_bilinear_form_constant=True
+            is_bilinear_form_constant=True,
+            mass_solver_options={
+                'ksp_type': 'preonly',
+                'pc_type': 'bjacobi',
+                'sub_ksp_type': 'preonly',
+                'sub_pc_type': 'lu'
+            }
         )
         return cls([sd_equation], None)
 
@@ -502,7 +528,13 @@ class SemiDiscreteSystem:
             non_stiff_residual_form=sum(non_stiff_residual_forms)
                 if len(non_stiff_residual_forms) != 0
                 else None,
-            is_bilinear_form_constant=True
+            is_bilinear_form_constant=True,
+            mass_solver_options={
+                'ksp_type': 'preonly',
+                'pc_type': 'bjacobi',
+                'sub_ksp_type': 'preonly',
+                'sub_pc_type': 'lu'
+            }
         )
 
         # Now create the lift equation
@@ -530,7 +562,13 @@ class SemiDiscreteSystem:
             bilinear_form=bilinear_form,
             stiff_residual_form=None,
             non_stiff_residual_form=non_stiff_residual_form,
-            is_bilinear_form_constant=True
+            is_bilinear_form_constant=True,
+            mass_solver_options={
+                'ksp_type': 'preonly',
+                'pc_type': 'bjacobi',
+                'sub_ksp_type': 'preonly',
+                'sub_pc_type': 'lu'
+            }
         )
 
         return cls([differential_equation], [lift_equation])

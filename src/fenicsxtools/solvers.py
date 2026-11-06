@@ -91,9 +91,13 @@ class FormedEquation:
                 sdequation.variable.function_space.mesh.comm
             )
             self._mass_solver.setOperators(self._mass_matrix)
-            self._mass_solver.setType(petsc4py.PETSc.KSP.Type.PREONLY)
-            self._mass_solver.getPC().setType(petsc4py.PETSc.PC.Type.LU)
-            self._mass_solver.setFromOptions() # Allows command-line PETSc options to override the above
+            prefix = f'mass_{sdequation.variable.name}_'
+            self._mass_solver.setOptionsPrefix(prefix)
+            opts = petsc4py.PETSc.Options() # Get command line options
+            for key, value in sdequation.mass_solver_options.items():
+                if not opts.hasName(prefix + key):
+                    opts[prefix + key] = value
+            self._mass_solver.setFromOptions()
             self._mass_solver.setUp()
 
         # If desired, set up a mass linear form
