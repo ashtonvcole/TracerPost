@@ -1,0 +1,75 @@
+# Template configuration file for a TracerPost salinity run.
+#
+# Usage: python tracer_post.py tracer_config.toml
+#
+# Keys use hyphens (underscores are also accepted). Relative paths are
+# resolved against the directory containing this file. Unknown sections or
+# keys are an error. Values shown are the defaults; keys marked REQUIRED have
+# no default.
+
+[inputs]
+# Filtered mesh in adios4dolfinx format (.bp), in lon/lat degrees. Must also
+# contain the continuous P1 bathymetry (DP). REQUIRED
+mesh = "path/to/mesh.bp"
+# Name of the continuous P1 bathymetry function (DP) in the mesh. Omit to use
+# the dolfinx default name (as written by adx.write_function without renaming).
+bathymetry-name = "dp"
+# Directory containing interp_coordinates.npy, interp_elements.npy, and
+# interp_node_map.npy for the interpolation mesh. REQUIRED
+interp-dir = "path/to/mesh/secondary_files"
+# ADCIRC elevation time series (fort.63). Gives the inflow boundary state
+# iota = c h and the output c = iota / h (h = zeta + DP). REQUIRED
+fort63 = "path/to/fort.63"
+# ADCIRC velocity time series (fort.64). REQUIRED
+fort64 = "path/to/fort.64"
+
+[projection]
+# Carte Parallelogrammique Projection (CPP) parameters
+radius-earth = 6378206.4  # Earth radius [m]
+cpp-lon = -94.5           # Reference longitude [deg]
+cpp-lat = 29.0            # Reference latitude [deg]
+
+[initial-condition]
+# Variable that the initial condition below specifies.
+# "iota": iota = c h is set directly
+# "c":    c is set, then converted via iota = c h with h = max(zeta + DP, 0)
+#         at t = 0 (requires bathymetry in the mesh, as always)
+# The gaussian amplitude, constant value, or "bp" function are all
+# interpreted as this variable.
+variable = "iota"
+
+# "gaussian": Gaussian bump in iota
+# "constant": uniform iota = value
+# "bp":       read iota from an adios4dolfinx file (DG1 on the mesh)
+type = "gaussian"
+
+# type = "constant"
+value = 1.0
+
+# type = "bp"
+# File holding iota. Omit to read from [inputs] mesh.
+# bp = "path/to/iota.bp"
+# Name of the function in the file
+name = "iota"
+
+# type = "gaussian"
+lon = -97.0611      # Center longitude [deg]
+lat = 27.8339       # Center latitude [deg]
+radius = 2000.0     # Standard deviation [m]
+amplitude = 1.0     # Peak value of iota
+
+[physics]
+velocity-scale = 1.0  # Multiplier applied to the velocity field
+diffusivity = 0.0     # Not implemented; must be 0
+
+[time-stepping]
+t-final = 86400.0   # Final simulation time [s]. REQUIRED
+dt = 1.0            # Time step [s]
+ssp-type = "rks3"   # PETSc SSP Runge-Kutta type
+
+[output]
+# Fields to write: "iota" and/or "c" (c = iota / h; needs bathymetry in mesh)
+fields = ["iota"]
+h-min = 1e-3        # c is set to 0 where h < h-min [m]
+path = "tracer.bp"  # Output VTX/ADIOS2 path
+write-every = 3600  # Write a snapshot every N steps

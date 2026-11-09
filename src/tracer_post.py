@@ -4,6 +4,11 @@ Run script for passive tracer post-processing of ADCIRC/DGSWEM output. Solves
 the depth-averaged advection equation for iota = c h with a DG discretization,
 using nodal velocity data from a fort.64 file.
 
+All run options are read from a TOML configuration file (see
+tracer_config.toml for a documented template):
+
+    python tracer_post.py tracer_config.toml
+
 Diffusion is not yet implemented.
 """
 
@@ -24,97 +29,142 @@ import os
 from petsc4py import PETSc
 import scipy.spatial
 import sys
+from types import SimpleNamespace
 import ufl
 
+try:
+    import tomllib  # Python >= 3.11
+except ModuleNotFoundError:
+    import tomli as tomllib
 
-def parse_args() -> argparse.Namespace:
-    """Read tracer simulation options using Argparse.
 
-    Returns
-        argparse.Namespace: The tracer simulation options.
+# Configuration schema: {section: {key: (default, type)}}. A default of
+# REQUIRED means the key must be present. TOML has no null, so optional keys
+# with a default of None are simply omitted from the file.
+REQUIRED = object()
+SCHEMA = {
+    'inputs': {
+        'mesh': (REQUIRED, str),
+        'bathymetry_name': (None, str),
+        'interp_dir': (REQUIRED, str),
+        'fort64': (REQUIRED, str),
+        'fort63': (REQUIRED, str),
+    },
+    'projection': {
+        'radius_earth': (6378206.4, float),
+        'cpp_lon': (-94.5, float),
+        'cpp_lat': (29.0, float),
+    },
+    'initial_condition': {
+        'variable': ('iota', str),
+        'type': ('gaussian', str),
+        'value': (1.0, float),
+        'bp': (None, str),
+        'name': ('iota', str),
+        'lon': (-97.0611, float),
+        'lat': (27.8339, float),
+        'radius': (2000.0, float),
+        'amplitude': (1.0, float),
+    },
+    'physics': {
+        'velocity_scale': (1.0, float),
+        'diffusivity': (0.0, float),
+    },
+    'time_stepping': {
+        't_final': (REQUIRED, float),
+        'dt': (1.0, float),
+        'ssp_type': ('rks3', str),
+    },
+    'output': {
+        'fields': (['iota'], list),
+        'h_min': (1e-3, float),
+        'path': ('tracer.bp', str),
+        'write_every': (3600, int),
+    },
+}
+CHOICES = {
+    ('initial_condition', 'variable'): ('iota', 'c'),
+    ('initial_condition', 'type'): ('gaussian', 'constant', 'bp'),
+}
+# Relative paths in these keys are resolved against the config file directory
+PATH_KEYS = {
+    ('inputs', 'mesh'), ('inputs', 'interp_dir'), ('inputs', 'fort64'),
+    ('inputs', 'fort63'), ('initial_condition', 'bp'), ('output', 'path'),
+}
+
+
+def load_config(path: str) -> SimpleNamespace:
+    """Read and validate a TOML run configuration.
+
+    Args:
+        path: Path to the TOML file.
+
+    Returns:
+        SimpleNamespace: Nested namespace, accessed as cfg.section.key, with
+            defaults filled in and relative paths resolved.
+
+    Raises:
+        ValueError: On unknown sections/keys, missing required keys, wrong
+            types, or invalid values.
     """
-    p = argparse.ArgumentParser(
-        description='Advect a passive tracer with ADCIRC/DGSWEM velocities.'
-    )
+    with open(path, 'rb') as f:
+        raw = tomllib.load(f)
+    # Config keys are written with hyphens (e.g. interp-dir); the schema and
+    # attribute names use underscores
+    raw = {s.replace('-', '_'): ({k.replace('-', '_'): v for k, v in d.items()}
+                                 if isinstance(d, dict) else d)
+           for s, d in raw.items()}
+    base = os.path.dirname(os.path.abspath(path))
 
-    g = p.add_argument_group('inputs')
-    g.add_argument('--mesh', required=True,
-        help='Filtered mesh in adios4dolfinx format (.bp), in lon/lat degrees.')
-    g.add_argument('--interp-dir', required=True,
-        help='Directory containing interp_coordinates.npy, interp_elements.npy,'
-             ' and interp_node_map.npy for the interpolation mesh.')
-    g.add_argument('--fort64', required=True,
-        help='ADCIRC velocity time series (fort.64).')
-    g.add_argument('--fort63', default=None,
-        help='ADCIRC elevation time series (fort.63). Required: gives the '
-             'inflow boundary state iota = c h and the output c = iota / h '
-             '(h = zeta + DP).')
+    unknown = set(raw) - set(SCHEMA)
+    if unknown:
+        raise ValueError(f'unknown config section(s): {sorted(unknown)}')
 
-    g = p.add_argument_group('projection')
-    g.add_argument('--radius-earth', type=float, default=6378206.4,
-        help='Earth radius for CPP [m] (default: %(default)s).')
-    g.add_argument('--cpp-lon', type=float, default=-94.5,
-        help='CPP reference longitude [deg] (default: %(default)s).')
-    g.add_argument('--cpp-lat', type=float, default=29.0,
-        help='CPP reference latitude [deg] (default: %(default)s).')
+    cfg = {}
+    for section, keys in SCHEMA.items():
+        given = raw.get(section, {})
+        unknown = set(given) - set(keys)
+        if unknown:
+            raise ValueError(
+                f'unknown key(s) in [{section}]: {sorted(unknown)}')
+        out = {}
+        for key, (default, typ) in keys.items():
+            if key not in given:
+                if default is REQUIRED:
+                    raise ValueError(f'missing required key [{section}] {key}')
+                out[key] = default
+                continue
+            val = given[key]
+            # Accept ints where floats are expected, but not bools
+            if typ is float and isinstance(val, int) \
+                    and not isinstance(val, bool):
+                val = float(val)
+            if not isinstance(val, typ) or (
+                    typ is not list and isinstance(val, bool)):
+                raise ValueError(
+                    f'[{section}] {key} must be {typ.__name__}, '
+                    f'got {type(val).__name__}')
+            if (section, key) in PATH_KEYS:
+                # Expand ~; absolute paths pass through join unchanged
+                val = os.path.normpath(
+                    os.path.join(base, os.path.expanduser(val)))
+            out[key] = val
+        cfg[section] = out
 
-    g = p.add_argument_group('initial condition')
-    g.add_argument('--ic-type', choices=['gaussian', 'constant', 'bp'],
-        default='gaussian',
-        help='Initial condition for iota (default: %(default)s).')
-    g.add_argument('--ic-value', type=float, default=1.0,
-        help='Constant value of iota for --ic-type constant '
-             '(default: %(default)s).')
-    g.add_argument('--ic-bp', default=None,
-        help='adios4dolfinx file holding iota for --ic-type bp. Must be a '
-             'DG1 function on the mesh (default: the --mesh file).')
-    g.add_argument('--ic-name', default='iota',
-        help='Name of the function in --ic-bp (default: %(default)s).')
-    g.add_argument('--ic-lon', type=float, default=-97.0611,
-        help='Gaussian center longitude [deg] (default: %(default)s).')
-    g.add_argument('--ic-lat', type=float, default=27.8339,
-        help='Gaussian center latitude [deg] (default: %(default)s).')
-    g.add_argument('--ic-radius', type=float, default=2000.0,
-        help='Gaussian standard deviation [m] (default: %(default)s).')
-    g.add_argument('--ic-amplitude', type=float, default=1.0,
-        help='Gaussian peak value of iota (default: %(default)s).')
+    for (section, key), choices in CHOICES.items():
+        if cfg[section][key] not in choices:
+            raise ValueError(
+                f'[{section}] {key} must be one of {choices}, '
+                f'got {cfg[section][key]!r}')
+    fields = cfg['output']['fields']
+    if not fields or any(f not in ('iota', 'c') for f in fields):
+        raise ValueError("[output] fields must be a non-empty list of "
+                         "'iota' and/or 'c'")
+    if cfg['physics']['diffusivity'] != 0.0:
+        raise ValueError('diffusion is not implemented; '
+                         '[physics] diffusivity must be 0')
 
-    g = p.add_argument_group('physics')
-    g.add_argument('--velocity-scale', type=float, default=1.0,
-        help='Multiplier applied to the velocity field (default: %(default)s).')
-    g.add_argument('--diffusivity', type=float, default=0.0,
-        help='Diffusivity. Not implemented; must be 0.')
-
-    g = p.add_argument_group('time stepping')
-    g.add_argument('--t-final', type=float, required=True,
-        help='Final simulation time [s].')
-    g.add_argument('--dt', type=float, default=1.0,
-        help='Time step [s] (default: %(default)s).')
-    g.add_argument('--ssp-type', default='rks3',
-        help='PETSc SSP Runge-Kutta type (default: %(default)s).')
-
-    g = p.add_argument_group('output')
-    g.add_argument('--output-fields', nargs='+', choices=['iota', 'c'],
-        default=['iota'],
-        help='Fields to write: iota and/or c = iota / h (default: iota). '
-             'c requires --fort63 and bathymetry in --mesh.')
-    g.add_argument('--bathymetry-name', default=None,
-        help='Name of the continuous P1 bathymetry function (DP) in --mesh '
-             '(default: the dolfinx default name, as written by '
-             'adx.write_function without renaming).')
-    g.add_argument('--h-min', type=float, default=1e-3,
-        help='c is set to 0 where h < h-min [m] (default: %(default)s).')
-    g.add_argument('--output', default='tracer.bp',
-        help='Output VTX/ADIOS2 path (default: %(default)s).')
-    g.add_argument('--write-every', type=int, default=3600,
-        help='Write a snapshot every N steps (default: %(default)s).')
-
-    args = p.parse_args()
-    if args.diffusivity != 0.0:
-        p.error('diffusion is not implemented; --diffusivity must be 0')
-    if args.fort63 is None:
-        p.error('--fort63 is required: the inflow boundary state is c h')
-    return args
+    return SimpleNamespace(**{s: SimpleNamespace(**v) for s, v in cfg.items()})
 
 
 def setup_logging(comm, level=logging.INFO, all_ranks=False):
@@ -194,26 +244,33 @@ class NodalTimeSeriesField:
 
 
 def main():
-    args = parse_args()
+    parser = argparse.ArgumentParser(
+        description='Advect a passive tracer with ADCIRC/DGSWEM velocities.')
+    parser.add_argument('config', help='TOML run configuration file.')
+    cfg = load_config(parser.parse_args().config)
+
     comm = MPI.COMM_WORLD
     log = setup_logging(comm=comm, level=logging.INFO, all_ranks=False)
     log.info('Starting Tracer Post salinity solver')
 
+    inp, proj, ic = cfg.inputs, cfg.projection, cfg.initial_condition
+    phys, ts, out = cfg.physics, cfg.time_stepping, cfg.output
+
     # Mesh and interpolation structures
     log.info('Reading mesh...')
-    domain = adx.read_mesh(args.mesh, comm)
-    interp_coordinates = np.load(os.path.join(args.interp_dir, 'interp_coordinates.npy'))
-    interp_elements = np.load(os.path.join(args.interp_dir, 'interp_elements.npy'))
-    interp_node_map = np.load(os.path.join(args.interp_dir, 'interp_node_map.npy'))
+    domain = adx.read_mesh(inp.mesh, comm)
+    interp_coordinates = np.load(os.path.join(inp.interp_dir, 'interp_coordinates.npy'))
+    interp_elements = np.load(os.path.join(inp.interp_dir, 'interp_elements.npy'))
+    interp_node_map = np.load(os.path.join(inp.interp_dir, 'interp_node_map.npy'))
     interp_node_mask = interp_node_map != -1
 
     # CPP projection of mesh and interpolation coordinates
     def cpp(coord):
         return at.geometry.cpp(
             coord=coord,
-            lon0=args.cpp_lon,
-            lat0=args.cpp_lat,
-            R=args.radius_earth,
+            lon0=proj.cpp_lon,
+            lat0=proj.cpp_lat,
+            R=proj.radius_earth,
             use_deg=True
         )
     interp_coordinates = cpp(interp_coordinates)
@@ -224,23 +281,24 @@ def main():
     kd = scipy.spatial.cKDTree(interp_coordinates)
 
     # Initial condition
-    x0, y0 = cpp(np.array([[args.ic_lon, args.ic_lat]]))[0, :2]
+    x0, y0 = cpp(np.array([[ic.lon, ic.lat]]))[0, :2]
     def iota0(x):
-        return args.ic_amplitude * np.exp(
-            -((x[0] - x0) ** 2 + (x[1] - y0) ** 2) / (2 * args.ic_radius ** 2))
+        return ic.amplitude * np.exp(
+            -((x[0] - x0) ** 2 + (x[1] - y0) ** 2) / (2 * ic.radius ** 2))
 
     # Function spaces
     log.info('Initializing tracer fields...')
     V = dx.fem.functionspace(domain, ('Discontinuous Lagrange', 1))
     W = dx.fem.functionspace(domain, ('Discontinuous Lagrange', 1, (domain.geometry.dim,)))
     iota = dx.fem.Function(V, name='iota')
-    if args.ic_type == 'gaussian':
+    if ic.type == 'gaussian':
         iota.interpolate(iota0)
-    elif args.ic_type == 'constant':
-        iota.x.array[:] = args.ic_value
+    elif ic.type == 'constant':
+        iota.x.array[:] = ic.value
     else:
         # First, check that function space matches
-        att = adx.read_attributes(args.ic_bp or args.mesh, comm, 'iota_element')
+        ic_file = ic.bp or inp.mesh
+        att = adx.read_attributes(ic_file, comm, f'{ic.name}_element')
         el = V.ufl_element()
         expected_family = el.basix_element.family.value
         expected_degree = el.degree
@@ -259,15 +317,15 @@ def main():
                 f'expected degree {expected_degree}, found {found_degree}\n'
                 f'expected discontinuous {expected_discontinuous}, found {found_discontinuous}\n'
             )
-        adx.read_function(args.ic_bp or args.mesh, iota, name=args.ic_name)
+        adx.read_function(ic_file, iota, name=ic.name)
     iota.x.scatter_forward()
 
     # Total depth h = zeta + DP is needed for the inflow boundary state
     # (iota = c h) and for the output field c = iota / h
-    want_c = 'c' in args.output_fields
+    want_c = 'c' in out.fields
     dp_cg = dx.fem.Function(
         dx.fem.functionspace(domain, ('Lagrange', 1)))
-    adx.read_function(args.mesh, dp_cg, name=args.bathymetry_name)
+    adx.read_function(inp.mesh, dp_cg, name=inp.bathymetry_name)
     dp = dx.fem.Function(V)
     dp.interpolate(dp_cg)
     if want_c:
@@ -279,15 +337,22 @@ def main():
     elevation_buffer = None
     if comm.rank == 0:
         log.info('Loading ADCIRC data buffers...')
-        velocity_buffer = at.io.TimeSeriesBuffer(args.fort64)
+        velocity_buffer = at.io.TimeSeriesBuffer(inp.fort64)
         velocity_buffer.open()
-        elevation_buffer = at.io.TimeSeriesBuffer(args.fort63)
+        elevation_buffer = at.io.TimeSeriesBuffer(inp.fort63)
         elevation_buffer.open()
     try:
         velocity = NodalTimeSeriesField(W, comm, velocity_buffer,
-            triangulation, kd, interp_node_mask, args.velocity_scale)
+            triangulation, kd, interp_node_mask, phys.velocity_scale)
         elevation = NodalTimeSeriesField(V, comm, elevation_buffer,
             triangulation, kd, interp_node_mask, 1.0)
+
+        # If the initial condition was specified as c, convert: iota = c h
+        # with h = max(zeta + DP, 0) evaluated at t = 0
+        if ic.variable == 'c':
+            h0 = np.maximum(elevation.v.x.array + dp.x.array, 0.0)
+            iota.x.array[:] = iota.x.array * h0
+            iota.x.scatter_forward()
 
         # Conservation law and semi-discrete DG system
         log.info('Building system...')
@@ -305,36 +370,35 @@ def main():
 
         # PETSc time stepper
         opts = PETSc.Options()
-        opts['ts_ssp_type'] = args.ssp_type
+        opts['ts_ssp_type'] = ts.ssp_type
         solver.ts.setType(PETSc.TS.Type.SSP)
         solver.ts.setTime(0.0)
-        solver.ts.setTimeStep(args.dt)
-        solver.ts.setMaxTime(args.t_final)
+        solver.ts.setTimeStep(ts.dt)
+        solver.ts.setMaxTime(ts.t_final)
         solver.ts.setExactFinalTime(PETSc.TS.ExactFinalTime.MATCHSTEP)
 
         out_fields = [f for f in (iota, c if want_c else None)
-                      if f is not None and f.name in args.output_fields]
-        with dx.io.VTXWriter(comm, args.output, out_fields,
+                      if f is not None and f.name in out.fields]
+        with dx.io.VTXWriter(comm, out.path, out_fields,
                              engine='BP4') as writer:
-            def monitor(ts, step, tt, uu):
-                if step % args.write_every != 0:
+            def monitor(ts_, step, tt, uu):
+                if step % out.write_every != 0:
                     return
                 log.info(f'writing step {step} at time {tt}')
                 dx.fem.petsc.assign(uu, iota)
                 iota.x.scatter_forward()
                 if want_c:
-                    # elevation.update(tt)
                     # Total depth; ADCIRC dry-node flags are clipped by h_min
                     h = elevation.v.x.array + dp.x.array
-                    wet = h >= args.h_min
+                    wet = h >= out.h_min
                     c.x.array[:] = 0.0
                     c.x.array[wet] = iota.x.array[wet] / h[wet]
                     c.x.scatter_forward()
                 writer.write(tt)
             solver.ts.setMonitor(monitor)
 
-            def pre_step(ts):
-                tt = ts.getTime()
+            def pre_step(ts_):
+                tt = ts_.getTime()
                 elevation.update(tt)
                 velocity.update(tt)
             solver.ts.setPreStep(pre_step)
