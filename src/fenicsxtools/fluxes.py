@@ -6,6 +6,31 @@ Functions for computing numerical fluxes at element interfaces.
 import dolfinx
 import ufl
 
+def upwind(F_p, F_m, U_p, U_m, J_p, J_m, n_p):
+    J_plus_n_plus = ufl.dot(J_p, n_p)
+    J_minus_n_plus = ufl.dot(J_m, n_p)
+    leaving_plus = ufl.And(
+        ufl.gt(J_plus_n_plus, 0.0),
+        ufl.gt(J_minus_n_plus, 0.0)
+    )
+    entering_plus = ufl.And(
+        ufl.lt(J_plus_n_plus, 0.0),
+        ufl.lt(J_minus_n_plus, 0.0)
+    )
+    return ufl.dot(ufl.conditional(
+        leaving_plus,
+        F_p,
+        ufl.conditional(
+            entering_plus,
+            F_m,
+            0.5 * (F_p + F_m)
+        )
+    ), n_p)
+
+def llf(F_p, F_m, U_p, U_m, J_p, J_m, n_p):
+    lam = ufl.max_value(abs(ufl.dot(J_p, n_p)), abs(ufl.dot(J_m, n_p)))
+    return ufl.dot(0.5 * (F_p + F_m), n_p) + 0.5 * lam * (U_p - U_m)
+
 def trace_upwind(F: ufl.core.expr.Expr, U: dolfinx.fem.Function,
     J: ufl.core.expr.Expr, n: ufl.FacetNormal) -> ufl.core.operator.Operator:
     """Upwind function trace.

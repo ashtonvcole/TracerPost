@@ -5,7 +5,8 @@ Different FEM formulation options for conservation laws.
 
 from types import NoneType
 
-from . import equations
+from dolfinx.fem.bcs import DirichletBC
+from . import equations, bcs
 import dolfinx
 import ufl
 
@@ -162,7 +163,9 @@ class SemiDiscreteSystem:
         return self._lifts
 
     @classmethod
-    def using_CG(cls, equation: equations.ConservationLaw
+    def using_CG(cls, equation: equations.ConservationLaw,
+        boundary_conditions: list[bcs.BoundaryCondition] | None = None,
+        ds = None
         ) -> 'SemiDiscreteSystem':
         """Create a semi-discrete system of equations using the Continuous
         Galerkin method.
@@ -185,6 +188,8 @@ class SemiDiscreteSystem:
         xi = ufl.TrialFunction(space)
         phi = ufl.TestFunction(space)
         n = ufl.FacetNormal(domain)
+        boundary_conditions = boundary_conditions or []
+        ds = ds if ds is not None else ufl.ds
 
         # Construct mass form
         bilinear_form = xi * phi * ufl.dx
@@ -192,6 +197,13 @@ class SemiDiscreteSystem:
         # Construct residual forms
         stiff_residual_forms = []
         non_stiff_residual_forms = []
+
+        # Test inflow/outflow from net hyperbolic flux
+        Jn = ufl.dot(
+            (sum(flux.jacobian_expression) for flux in equation.fluxes
+                if flux.is_hyperbolic),
+            n
+        )
 
         # Flux contributions
         for flux in equation.fluxes:
@@ -201,11 +213,26 @@ class SemiDiscreteSystem:
 
             # Exterior boundary contribution
             if flux.is_hyperbolic:
+                # Default condition is zero in, passive out
                 residual_form += -ufl.conditional(
-                    ufl.dot(flux.jacobian_expression, n) > 0.0,
+                    Jn < 0.0,
                     ufl.dot(flux.expression, n),
                     dolfinx.fem.Constant(domain, 0.0)
-                ) * phi * ufl.ds
+                ) * phi * ds
+
+                # Apply specified conditions
+                for bc in boundary_conditions:
+                    if isinstance(bc, bcs.DirichletCondition):
+                        residual_form += -ufl.conditional(
+                            Jn > 0.0,
+                            ufl.dot(ufl.replace(
+                                flux.expression,
+                                {equation.U: bc.value}
+                            ), n),
+                            dolfinx.fem.Constant(domain, 0.0)
+                        )
+                    else:
+                        raise ValueError('Invalid boundary condition!')
             else:
                 # Neglect parabolic terms on the boundary
                 pass
@@ -245,7 +272,9 @@ class SemiDiscreteSystem:
 
     @classmethod
     def using_DG(cls, equation: equations.ConservationLaw,
-        trace_function, boundary_state = None) -> 'SemiDiscreteSystem':
+        trace_function,
+        boundary_conditions: list[bcs.BoundaryCondition] | None = None
+        ) -> 'SemiDiscreteSystem':
         """Create a semi-discrete system of equations using the Discontinuous
         Galerkin method.
 
@@ -264,8 +293,8 @@ class SemiDiscreteSystem:
             trace_function (callable): The flux solver being used at element
                 interfaces to resolve discontinuities. The function signature
                 should be trace_function(F, U, J, n).
-            boundary_state (optional): Temporary inflow boundary
-                condition implementation. Default is None.
+            boundary_conditions (list[bcs.BoundaryCondition], optional): A list
+                of boundary conditions. Default is None.
         """
         # Preliminaries
         space = equation.U.function_space
@@ -273,6 +302,7 @@ class SemiDiscreteSystem:
         xi = ufl.TrialFunction(space)
         phi = ufl.TestFunction(space)
         n = ufl.FacetNormal(domain)
+        boundary_conditions = boundary_conditions or []
 
         # Construct mass form
         bilinear_form = xi * phi * ufl.dx
@@ -306,17 +336,7 @@ class SemiDiscreteSystem:
                 non_stiff_jacobians.append(J)
 
             # Exterior boundary contribution
-            if flux.is_hyperbolic:
-                residual_form += -ufl.conditional(
-                    ufl.dot(J, n) > 0.0,
-                    ufl.dot(F, n),
-                    (ufl.replace(ufl.dot(F, n), {equation.U: boundary_state})
-                        if boundary_state is not None
-                        else dolfinx.fem.Constant(domain, 0.0))
-                ) * phi * ufl.ds
-            else:
-                # Neglect parabolic terms on the boundary
-                pass
+            # Move to separate loop
 
             # Add the individual flux to the correct residual
             if flux.is_stiff:
@@ -345,6 +365,24 @@ class SemiDiscreteSystem:
                 n
             ) * ufl.jump(phi) * ufl.dS
             non_stiff_residual_forms.append(residual_form)
+
+        # Revisit exterior boundary contribution
+        for bc in boundary_conditions:
+            if type(bc) is bcs.DirichletCondition:
+                # Add fluxes substituted with fixed value
+                # Inflow only
+                for flux in fluxes:
+                    # For readability
+                    F = flux.expression
+                    J = flux.jacobian_expression
+
+                    residual_form = -ufl.dot(ufl.conditional(
+                        ufl.dot(J, n) < 0.0,
+                        ufl.replace(F, {equation.U: bc.value}),
+                        F
+                    ), n) * phi * ufl.ds(bc.tag)
+            else:
+                raise ValueError('Invalid boundary condition!')
 
         # Source contributions
         for source in equation.sources:
