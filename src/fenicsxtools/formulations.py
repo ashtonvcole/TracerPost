@@ -4,8 +4,6 @@ Different FEM formulation options for conservation laws.
 """
 
 from types import NoneType
-
-from dolfinx.fem.bcs import DirichletBC
 from . import equations, bcs
 import dolfinx
 import ufl
