@@ -37,7 +37,13 @@ class DirichletCondition(BoundaryCondition):
         return self._value
 
 class FluxCondition(BoundaryCondition):
-    pass
+    def __init__(self, tag, value, update = None):
+            super().__init__(tag, update)
+            self._value = value
+
+    @property
+    def value(self):
+        return self._value
 
 class OpenCondition(BoundaryCondition):
     pass
