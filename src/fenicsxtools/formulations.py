@@ -179,6 +179,7 @@ class SemiDiscreteSystem:
         Arguments:
             equation (equations.ConservationLaw): The conservation law being
                 solved for.
+            ds: A partitioned boundary object.
         """
         # Preliminaries
         space = equation.U.function_space
@@ -188,6 +189,7 @@ class SemiDiscreteSystem:
         n = ufl.FacetNormal(domain)
         boundary_conditions = boundary_conditions or []
         ds = ds if ds is not None else ufl.ds
+        zero = dolfinx.fem.Constant(domain, 0.0)
 
         # Construct mass form
         bilinear_form = xi * phi * ufl.dx
@@ -196,50 +198,84 @@ class SemiDiscreteSystem:
         stiff_residual_forms = []
         non_stiff_residual_forms = []
 
+        # Accumulate fluxes for boundary terms
+        stiff_fluxes = []
+        non_stiff_fluxes = []
+
         # Test inflow/outflow from net hyperbolic flux
-        Jn = ufl.dot(
-            (sum(flux.jacobian_expression) for flux in equation.fluxes
-                if flux.is_hyperbolic),
+        hyperbolic_fluxes = [
+            flux 
+            for flux in equation.fluxes 
+            if flux.is_hyperbolic
+        ]
+        Jn_h = ufl.dot(
+            sum(flux.jacobian_expression
+                for flux in hyperbolic_fluxes),
             n
-        )
+        ) if len(hyperbolic_fluxes) > 0 else zero
 
         # Flux contributions
+        # Add volume forms and sort boundary terms
         for flux in equation.fluxes:
-            # Volume integral
             residual_form = ufl.dot(flux.expression,
                 ufl.grad(phi)) * ufl.dx
-
-            # Exterior boundary contribution
-            if flux.is_hyperbolic:
-                # Default condition is zero in, passive out
-                residual_form += -ufl.conditional(
-                    Jn < 0.0,
-                    ufl.dot(flux.expression, n),
-                    dolfinx.fem.Constant(domain, 0.0)
-                ) * phi * ds
-
-                # Apply specified conditions
-                for bc in boundary_conditions:
-                    if isinstance(bc, bcs.DirichletCondition):
-                        residual_form += -ufl.conditional(
-                            Jn > 0.0,
-                            ufl.dot(ufl.replace(
-                                flux.expression,
-                                {equation.U: bc.value}
-                            ), n),
-                            dolfinx.fem.Constant(domain, 0.0)
-                        )
-                    else:
-                        raise ValueError('Invalid boundary condition!')
-            else:
-                # Neglect parabolic terms on the boundary
-                pass
-
-            # Add the individual flux to the correct residual
             if flux.is_stiff:
                 stiff_residual_forms.append(residual_form)
+                stiff_fluxes.append(flux.expression)
+                stiff_jacobians.append(flux.jacobian_expression)
             else:
                 non_stiff_residual_forms.append(residual_form)
+                non_stiff_fluxes.append(flux.expression)
+                non_stiff_jacobians.append(flux.jacobian_expression)
+
+        # Revisit interior/exterior boundary contributions
+        if len(stiff_fluxes) > 0 and len(non_stiff_fluxes) > 0:
+            stiff_residual_forms.append(get_CG_boundary_terms(
+                F=sum(stiff_fluxes),
+                U=equation.U,
+                Jn_h=Jn_h,
+                n=n,
+                phi=phi,
+                boundary_conditions=boundary_conditions,
+                ds=ds,
+                zero=zero,
+                apply_flux_conditions=False
+            ))
+            non_stiff_residual_forms.append(get_CG_boundary_terms(
+                F=sum(non_stiff_fluxes),
+                U=equation.U,
+                Jn_h=Jn_h,
+                n=n,
+                phi=phi,
+                boundary_conditions=boundary_conditions,
+                ds=ds,
+                zero=zero,
+                apply_flux_conditions=True
+            ))
+        elif len(stiff_fluxes) > 0:
+            stiff_residual_forms.append(get_CG_boundary_terms(
+                F=sum(stiff_fluxes),
+                U=equation.U,
+                Jn_h=Jn_h,
+                n=n,
+                phi=phi,
+                boundary_conditions=boundary_conditions,
+                ds=ds,
+                zero=zero,
+                apply_flux_conditions=True
+            ))
+        elif len(non_stiff_fluxes) > 0:
+            non_stiff_residual_forms.append(get_CG_boundary_terms(
+                F=sum(non_stiff_fluxes),
+                U=equation.U,
+                Jn_h=Jn_h,
+                n=n,
+                phi=phi,
+                boundary_conditions=boundary_conditions,
+                ds=ds,
+                zero=zero,
+                apply_flux_conditions=True
+            ))
 
         # Source contributions
         for source in equation.sources:
@@ -271,7 +307,8 @@ class SemiDiscreteSystem:
     @classmethod
     def using_DG(cls, equation: equations.ConservationLaw,
         trace_function,
-        boundary_conditions: list[bcs.BoundaryCondition] | None = None
+        boundary_conditions: list[bcs.BoundaryCondition] | None = None,
+        ds = None
         ) -> 'SemiDiscreteSystem':
         """Create a semi-discrete system of equations using the Discontinuous
         Galerkin method.
@@ -290,9 +327,10 @@ class SemiDiscreteSystem:
                 solved for. This must be hyperbolic.
             trace_function (callable): The flux solver being used at element
                 interfaces to resolve discontinuities. The function signature
-                should be trace_function(F, U, J, n).
+                should be trace_function(F_p, F_m, U_p, U_m, J_p, J_m, n_p).
             boundary_conditions (list[bcs.BoundaryCondition], optional): A list
                 of boundary conditions. Default is None.
+            ds: A partitioned boundary object.
         """
         # Preliminaries
         space = equation.U.function_space
@@ -301,6 +339,8 @@ class SemiDiscreteSystem:
         phi = ufl.TestFunction(space)
         n = ufl.FacetNormal(domain)
         boundary_conditions = boundary_conditions or []
+        ds = ds if ds is not None else ufl.ds
+        zero = dolfinx.fem.Constant(domain, 0.0)
 
         # Construct mass form
         bilinear_form = xi * phi * ufl.dx
@@ -309,78 +349,74 @@ class SemiDiscreteSystem:
         stiff_residual_forms = []
         non_stiff_residual_forms = []
 
-        # Fluxes are accumulated
+        # Accumulate fluxes for boundary terms
         stiff_fluxes = []
         stiff_jacobians = []
         non_stiff_fluxes = []
         non_stiff_jacobians = []
 
+        # Test inflow/outflow from net hyperbolic flux
+        hyperbolic_fluxes = [
+            flux 
+            for flux in equation.fluxes 
+            if flux.is_hyperbolic
+        ]
+        Jn_h = ufl.dot(
+            sum(flux.jacobian_expression
+                for flux in hyperbolic_fluxes),
+            n
+        ) if len(hyperbolic_fluxes) > 0 else zero
+
         # Flux contributions
+        # Add volume forms and sort boundary terms
         for flux in equation.fluxes:
-            # For readability
-            F = flux.expression
-            J = flux.jacobian_expression
-
-            # Volume integral
-            residual_form = ufl.dot(F,
+            residual_form = ufl.dot(flux.expression,
                 ufl.grad(phi)) * ufl.dx
-
-            # Interior boundary contributions
-            if flux.is_stiff:
-                stiff_fluxes.append(F)
-                stiff_jacobians.append(J)
-            else:
-                non_stiff_fluxes.append(F)
-                non_stiff_jacobians.append(J)
-
-            # Exterior boundary contribution
-            # Move to separate loop
-
-            # Add the individual flux to the correct residual
             if flux.is_stiff:
                 stiff_residual_forms.append(residual_form)
+                stiff_fluxes.append(flux.expression)
+                stiff_jacobians.append(flux.jacobian_expression)
             else:
                 non_stiff_residual_forms.append(residual_form)
+                non_stiff_fluxes.append(flux.expression)
+                non_stiff_jacobians.append(flux.jacobian_expression)
 
-        # Revisit interior boundary contributions
-        if len(stiff_fluxes) > 0:
-            F = sum(stiff_fluxes)
-            J = sum(stiff_jacobians)
-            residual_form = -trace_function(
-                F,
-                equation.U,
-                J,
-                n
-            ) * ufl.jump(phi) * ufl.dS
-            stiff_residual_forms.append(residual_form)
-        if len(non_stiff_fluxes) > 0:
-            F = sum(non_stiff_fluxes)
-            J = sum(non_stiff_jacobians)
-            residual_form = -trace_function(
-                F,
-                equation.U,
-                J,
-                n
-            ) * ufl.jump(phi) * ufl.dS
-            non_stiff_residual_forms.append(residual_form)
-
-        # Revisit exterior boundary contribution
-        for bc in boundary_conditions:
-            if type(bc) is bcs.DirichletCondition:
-                # Add fluxes substituted with fixed value
-                # Inflow only
-                for flux in fluxes:
-                    # For readability
-                    F = flux.expression
-                    J = flux.jacobian_expression
-
-                    residual_form = -ufl.dot(ufl.conditional(
-                        ufl.dot(J, n) < 0.0,
-                        ufl.replace(F, {equation.U: bc.value}),
-                        F
-                    ), n) * phi * ufl.ds(bc.tag)
-            else:
-                raise ValueError('Invalid boundary condition!')
+        # Revisit interior/exterior boundary contributions
+        # For consistency, stiff residual gets trace of stiff fluxes
+        # Non-stiff gets the difference from the total
+        total_boundary_form = get_DG_boundary_terms(
+            F=sum(stiff_fluxes + non_stiff_fluxes),
+            U=equation.U,
+            J=sum(stiff_jacobians + non_stiff_jacobians),
+            Jn_h=Jn_h,
+            n=n,
+            trace_function=trace_function,
+            phi=phi,
+            boundary_conditions=boundary_conditions,
+            ds=ds,
+            zero=zero,
+            apply_flux_conditions=True
+        )
+        if len(stiff_fluxes) > 0 and len(non_stiff_fluxes) > 0:
+            stiff_boundary_form = get_DG_boundary_terms(
+                F=sum(stiff_fluxes),
+                U=equation.U,
+                J=sum(stiff_jacobians),
+                Jn_h=Jn_h,
+                n=n,
+                trace_function=trace_function,
+                phi=phi,
+                boundary_conditions=boundary_conditions,
+                ds=ds,
+                zero=zero,
+                apply_flux_conditions=False
+            )
+            stiff_residual_forms.append(stiff_boundary_form)
+            non_stiff_residual_forms.append(total_boundary_form - stiff_boundary_form)
+        elif len(stiff_fluxes) > 0:
+            stiff_residual_forms.append(total_boundary_form)
+        elif len(non_stiff_fluxes) > 0:
+            non_stiff_residual_forms.append(total_boundary_form)
 
         # Source contributions
         for source in equation.sources:
@@ -612,6 +648,99 @@ class SemiDiscreteSystem:
         )
 
         return cls([differential_equation], [lift_equation])
+
+def get_CG_boundary_terms(F, U, Jn_h, n, phi, boundary_conditions, ds, zero, apply_flux_conditions):
+    """Get CG boundary integral terms for a flux.
+    
+    Arguments:
+        F: The flux.
+        U: The state variable.
+        Jn_h: The sum of Jacobians of hyperbolic fluxes dotted with the normal,
+            i.e., the characteristic speed.
+        n: The normal vector.
+        phi: The test function complementary to U.
+        boundary_conditions: A list of boundary conditions to apply at inflows.
+        ds: A partitioned boundary object.
+        zero: A constant zero object.
+        apply_flux_conditions: Whether to apply prescribed-flux conditions.
+    """
+    # Add open boundary contribution at outflows
+    residual_form = -ufl.conditional(
+        Jn_h > 0.0, # Outflow
+        ufl.dot(F, n),
+        zero
+    ) * phi * ds
+
+    # Add Dirichlet conditions at inflows
+    # Only apply flux conditions if requested, to avoid double-counting
+    for bc in boundary_conditions:
+        if isinstance(bc, bcs.DirichletCondition):
+            residual_form += -ufl.conditional(
+                Jn_h < 0.0, # Inflow
+                ufl.dot(ufl.replace(F, {U: bc.value}), n),
+                zero
+            ) * phi * ds(bc.tag)
+        if isinstance(bc, bcs.FluxCondition) and apply_flux_conditions:
+            residual_form += -ufl.conditional(
+                Jn_h < 0.0, # Inflow
+                ufl.dot(bc.value, n),
+                zero
+            ) * phi * ds(bc.tag)
+    return residual_form
+
+def get_DG_boundary_terms(F, U, J, Jn_h, n, trace_function, phi, boundary_conditions, ds, zero, apply_flux_conditions):
+    """Get DG interior and exterior boundary integral terms for a flux.
+    
+    Arguments:
+        F: The flux.
+        U: The state variable.
+        J: The Jacobian of F. If using UFL differentiation, this must pass
+            through expand_derivatives.
+        Jn_h: The sum of Jacobians of hyperbolic fluxes dotted with the normal,
+            i.e., the characteristic speed.
+        n: The normal vector.
+        trace_function (callable): The flux solver being used at element
+            interfaces to resolve discontinuities.
+        phi: The test function complementary to U.
+        boundary_conditions: A list of boundary conditions to apply at inflows.
+        ds: A partitioned boundary object.
+        zero: A constant zero object.
+        apply_flux_conditions: Whether to apply prescribed-flux conditions.
+    """
+    # Add interior contribution
+    residual_form = -trace_function(
+        F('+'), F('-'), U('+'), U('-'),
+        J('+'), J('-'), n('+')
+    ) * ufl.jump(phi) * ufl.dS
+
+    # Add open boundary contribution at outflows
+    residual_form += -ufl.conditional(
+        Jn_h > 0.0, # Outflow
+        ufl.dot(F, n),
+        zero
+    ) * phi * ds
+
+    # Add Dirichlet conditions at inflows
+    # Only apply flux conditions if requested, to avoid double-counting
+    for bc in boundary_conditions:
+        if isinstance(bc, bcs.DirichletCondition):
+            residual_form += -ufl.conditional(
+                Jn_h < 0.0, # Inflow
+                trace_function(
+                    F, ufl.replace(F, {U: bc.value}),
+                    U, bc.value,
+                    J, ufl.replace(J, {U: bc.value}),
+                    n
+                ),
+                zero
+            ) * phi * ds(bc.tag)
+        if isinstance(bc, bcs.FluxCondition) and apply_flux_conditions:
+            residual_form += -ufl.conditional(
+                Jn_h < 0.0, # Inflow
+                ufl.dot(bc.value, n),
+                zero
+            ) * phi * ds(bc.tag)
+    return residual_form
 
 # Begin deferred structures
 # To be removed
