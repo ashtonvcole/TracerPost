@@ -37,14 +37,16 @@ class Flux:
         self._U = U
         self._expression = expression
         Uvar = ufl.variable(U)
-        self._jacobian_expression = ufl.replace(
-            ufl.diff(
-                ufl.replace(
-                    expression,
-                    {U: Uvar}
-                ),
-                Uvar),
-            {Uvar: U}
+        self._jacobian_expression = ufl.algorithms.expand_derivatives(
+            ufl.replace(
+                ufl.diff(
+                    ufl.replace(
+                        expression,
+                        {U: Uvar}
+                    ),
+                    Uvar),
+                {Uvar: U}
+            )
         )
         self._is_stiff = is_stiff
         self._is_hyperbolic = is_hyperbolic
