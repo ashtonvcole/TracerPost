@@ -224,11 +224,9 @@ class SemiDiscreteSystem:
             if flux.is_stiff:
                 stiff_residual_forms.append(residual_form)
                 stiff_fluxes.append(flux.expression)
-                stiff_jacobians.append(flux.jacobian_expression)
             else:
                 non_stiff_residual_forms.append(residual_form)
                 non_stiff_fluxes.append(flux.expression)
-                non_stiff_jacobians.append(flux.jacobian_expression)
 
         # Revisit interior/exterior boundary contributions
         if len(stiff_fluxes) > 0 and len(non_stiff_fluxes) > 0:
