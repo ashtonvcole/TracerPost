@@ -5,6 +5,7 @@ General templates for conservation laws.
 
 import dolfinx
 import ufl
+import ufl.formatting.ufl2unicode
 
 class Flux:
     """A lightweight wrapper for a flux component of a conservation law.
