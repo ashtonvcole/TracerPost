@@ -73,3 +73,13 @@ fields = ["iota"]
 h-min = 1e-3        # c is set to 0 where h < h-min [m]
 path = "tracer.bp"  # Output VTX/ADIOS2 path
 write-every = 3600  # Write a snapshot every N steps
+
+[[boundary-conditions]]
+meshtag_name = "boundary_name" # FEniCSx meshtag identifier
+type = "concentration" # Whether to fix iota, c, etc.
+value = 1.0         # Fixed value in time
+# series = boundary_data.csv # Time series with columns t, c
+
+# To add more boundary conditions, add another table with the same header
+# [[boundary-condition]]
+
