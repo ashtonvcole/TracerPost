@@ -188,6 +188,8 @@ class SemiDiscreteSystem:
         phi = ufl.TestFunction(space)
         n = ufl.FacetNormal(domain)
         boundary_conditions = boundary_conditions or []
+        if len(boundary_conditions) > 0 and ds is None:
+            raise ValueError('Boundary conditions provided without tagged measure!')
         ds = ds if ds is not None else ufl.ds
         zero = dolfinx.fem.Constant(domain, 0.0)
 
@@ -339,6 +341,8 @@ class SemiDiscreteSystem:
         phi = ufl.TestFunction(space)
         n = ufl.FacetNormal(domain)
         boundary_conditions = boundary_conditions or []
+        if len(boundary_conditions) > 0 and ds is None:
+            raise ValueError('Boundary conditions provided without tagged measure!')
         ds = ds if ds is not None else ufl.ds
         zero = dolfinx.fem.Constant(domain, 0.0)
 
