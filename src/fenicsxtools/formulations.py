@@ -136,9 +136,12 @@ class SemiDiscreteSystem:
             lifts, provided in dependency order. E.g., if the equation for c
             is dependent on a and b, b on a and c, and a on c, then the order
             is a, b.
+        updated_boundary_conditions (list[bcs.BoundaryCondition]): Boundary
+            conditions to be updated with a callback at each time step.
     """
     def __init__(self, sdequations: list[SemiDiscreteEquation],
-        lifts: list[SemiDiscreteEquation] | None = None):
+        lifts: list[SemiDiscreteEquation] | None = None,
+        boundary_conditions: list[bcs.BoundaryCondition] | None = None):
         """Constructor.
 
         Arguments:
@@ -148,9 +151,17 @@ class SemiDiscreteSystem:
                 variable lifts, provided in dependency order. E.g., if the
                 equation for c is dependent on a and b, b on a and c, and a on
                 c, then the order is a, b. Default is None.
+            boundary_conditions (list[bcs.BoundaryCondition], optional):
+                Boundary conditions which need an update callback at each step.
+                Conditions without a callback will be ignored. Default is None.
         """
         self._sdequations = sdequations
         self._lifts = lifts
+        boundary_conditions = boundary_conditions or []
+        self._updated_boundary_conditions = [
+            bc for bc in boundary_conditions
+            if bc.update is not None
+        ]
 
     @property
     def sdequations(self) -> list[SemiDiscreteEquation]:
@@ -159,6 +170,10 @@ class SemiDiscreteSystem:
     @property
     def lifts(self) -> list[SemiDiscreteEquation] | None:
         return self._lifts
+
+    @property
+    def updated_boundary_conditions(self) -> list[bcs.BoundaryCondition]:
+        return self._updated_boundary_conditions
 
     @classmethod
     def using_CG(cls, equation: equations.ConservationLaw,
@@ -179,6 +194,8 @@ class SemiDiscreteSystem:
         Arguments:
             equation (equations.ConservationLaw): The conservation law being
                 solved for.
+            boundary_conditions (list[bcs.BoundaryCondition], optional): A list
+                of boundary conditions. Default is None.
             ds: A partitioned boundary object.
         """
         # Preliminaries
@@ -302,7 +319,11 @@ class SemiDiscreteSystem:
                 'ksp_rtol': 1e-12
             }
         )
-        return cls([sd_equation], None)
+        return cls(
+            sdequations=[sd_equation],
+            lifts=None,
+            boundary_conditions=boundary_conditions
+        )
 
     @classmethod
     def using_DG(cls, equation: equations.ConservationLaw,
@@ -446,7 +467,11 @@ class SemiDiscreteSystem:
                 'sub_pc_type': 'lu'
             }
         )
-        return cls([sd_equation], None)
+        return cls(
+            sdequations=[sd_equation],
+            lifts=None,
+            boundary_conditions=boundary_conditions
+        )
 
     @classmethod
     def using_LDG(cls, equation: equations.ConservationLaw,
