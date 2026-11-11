@@ -3,10 +3,12 @@
 Turn semidiscrete ODE/DAE systems into PETSc TS solver objects.
 """
 
+
 import dolfinx
 import dolfinx.fem.petsc
 from fenicsxtools import formulations
 import petsc4py.PETSc
+
 
 class FormedEquation:
     """Lightweight wrapper for a compiled semi-discrete equation.
@@ -418,6 +420,7 @@ class FormedEquation:
                 mode=petsc4py.PETSc.ScatterMode.REVERSE
             )
 
+
 def _get_rhs_explicit(states: list[dolfinx.fem.Function],
     equations: list[FormedEquation],
     lifts: list[FormedEquation]):
@@ -487,107 +490,87 @@ def _get_rhs_explicit(states: list[dolfinx.fem.Function],
         )
     return rhs
 
-class TSSolver:
-    """Lightweight wrapper for a TS solver.
 
-    Attributes:
-        ts (petsc4py.PETSc.TS): The ODE integrator object.
+def ts_from_SemiDiscreteSystem(system: formulations.SemiDiscreteSystem,
+    method: str = 'imex') -> petsc4py.PETSc.TS:
+    """Construct a TS solver from a semidiscrete system of equations.
+
+    Arguments:
+        system (formulations.SemiDiscreteSystem): The system of semidiscrete
+            equations.
+        method (str, optional): The handling of stiff and non-stiff
+            residuals. Accepted values are "explicit", "implicit", and
+            "imex", Default is "imex".
     """
+    # Need to decide whether to register rhs and lhs
+    # Need better handling of communicators
+    ts = petsc4py.PETSc.TS().create(
+        system.sdequations[0].variable.function_space.mesh.comm
+    )
 
-    def __init__(self, ts: petsc4py.PETSc.TS):
-        """Constructor.
+    # Get combined state vector
+    # Copy over initial condition
+    states = [equation.variable for equation in system.sdequations]
+    x = dolfinx.fem.petsc.create_vector(
+        [state.function_space for state in states], kind="mpi")
+    dolfinx.fem.petsc.assign(states, x)
+    ts.setSolution(x)
 
-        Arguments:
-            ts (petsc4py.PETSc.TS): The ODE integrator object.
-        """
-        self._ts = ts
-
-    @property
-    def ts(self) -> petsc4py.PETSc.TS:
-        """petsc4py.PETSc.TS: The ODE integrator object."""
-        return self._ts
-
-    @classmethod
-    def from_SemiDiscreteSystem(cls, system: formulations.SemiDiscreteSystem,
-        method: str = 'imex') -> 'TSSolver':
-        """Construct a TS solver from a semidiscrete system of equations.
-
-        Arguments:
-            system (formulations.SemiDiscreteSystem): The system of semidiscrete
-                equations.
-            method (str, optional): The handling of stiff and non-stiff
-                residuals. Accepted values are "explicit", "implicit", and
-                "imex", Default is "imex".
-        """
-        # Need to decide whether to register rhs and lhs
-        # Need better handling of communicators
-        ts = petsc4py.PETSc.TS().create(
-            system.sdequations[0].variable.function_space.mesh.comm
+    # Set up lift equations
+    # Always the same
+    lifts = [
+        FormedEquation(
+            sdequation=lift,
+            use_mass_matrix=True, # Always
+            use_mass_solver=True, # Always
+            split_residual=False # Never
         )
+        for lift in system.lifts
+    ] if system.lifts is not None else []
 
-        # Get combined state vector
-        # Copy over initial condition
-        states = [equation.variable for equation in system.sdequations]
-        x = dolfinx.fem.petsc.create_vector(
-            [state.function_space for state in states], kind="mpi")
-        dolfinx.fem.petsc.assign(states, x)
-        ts.setSolution(x)
-
-        # Set up lift equations
-        # Always the same
-        lifts = [
+    # Convert ufl forms into dolfinx/PETSc equations
+    if method == 'explicit':
+        # Set up differential equations
+        # Non-lift algebraic constraints not allowed
+        equations = []
+        for sdequation in system.sdequations:
+            if not sdequation.is_differential:
+                raise ValueError('Explicit solution is restricted to differential equations only.')
+            equations.append(FormedEquation(
+                sdequation=sdequation,
+                use_mass_matrix=True, # For solver
+                use_mass_solver=True, # For RHS
+                split_residual=False # Only for IMEX
+            ))
+        # Register system of equations within ts
+        ts.setRHSFunction(
+            _get_rhs_explicit(states, equations, lifts),
+            x.duplicate()
+        )
+    elif method == 'implicit':
+        # Set up differential equations
+        equations = [
             FormedEquation(
-                sdequation=lift,
-                use_mass_matrix=True, # Always
-                use_mass_solver=True, # Always
-                split_residual=False # Never
+                sdequation=sdequation,
+                use_mass_matrix=True, # For Jacobian
+                use_mass_solver=False, # Not needed
+                split_residual=False # Only for IMEX
             )
-            for lift in system.lifts
-        ] if system.lifts is not None else []
-
-        # Convert ufl forms into dolfinx/PETSc equations
-        if method == 'explicit':
-            # Set up differential equations
-            # Non-lift algebraic constraints not allowed
-            equations = []
-            for sdequation in system.sdequations:
-                if not sdequation.is_differential:
-                    raise ValueError('Explicit solution is restricted to differential equations only.')
-                equations.append(FormedEquation(
-                    sdequation=sdequation,
-                    use_mass_matrix=True, # For solver
-                    use_mass_solver=True, # For RHS
-                    split_residual=False # Only for IMEX
-                ))
-            # Register system of equations within ts
-            ts.setRHSFunction(
-                _get_rhs_explicit(states, equations, lifts),
-                x.duplicate()
+            for sdequation in system.sdequations
+        ]
+        raise NotImplementedError
+    elif method == 'imex':
+        # Set up differential equations
+        equations = [
+            FormedEquation(
+                sdequation=sdequation,
+                use_mass_matrix=True, # For Jacobian
+                use_mass_solver=True, # For RHS
+                split_residual=True # Only for IMEX
             )
-        elif method == 'implicit':
-            # Set up differential equations
-            equations = [
-                FormedEquation(
-                    sdequation=sdequation,
-                    use_mass_matrix=True, # For Jacobian
-                    use_mass_solver=False, # Not needed
-                    split_residual=False # Only for IMEX
-                )
-                for sdequation in system.sdequations
-            ]
-            raise NotImplementedError
-        elif method == 'imex':
-            # Set up differential equations
-            equations = [
-                FormedEquation(
-                    sdequation=sdequation,
-                    use_mass_matrix=True, # For Jacobian
-                    use_mass_solver=True, # For RHS
-                    split_residual=True # Only for IMEX
-                )
-                for sdequation in system.sdequations
-            ]
-            raise NotImplementedError
-        else:
-            raise ValueError
-        return cls(ts)
+            for sdequation in system.sdequations
+        ]
+        raise NotImplementedError
+    else:
+        raise ValueError
+    return ts
