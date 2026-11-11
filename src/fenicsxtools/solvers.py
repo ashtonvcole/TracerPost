@@ -4,6 +4,7 @@ Turn semidiscrete ODE/DAE systems into PETSc TS solver objects.
 """
 
 
+from . import bcs
 import dolfinx
 import dolfinx.fem.petsc
 from fenicsxtools import formulations
@@ -423,7 +424,8 @@ class FormedEquation:
 
 def _get_rhs_explicit(states: list[dolfinx.fem.Function],
     equations: list[FormedEquation],
-    lifts: list[FormedEquation]):
+    lifts: list[FormedEquation],
+    updated_boundary_conditions: list[bcs.BoundaryCondition]):
     def rhs(ts, t, u, G):
         """Right-hand side G of the general TS ODE.
 
@@ -442,6 +444,10 @@ def _get_rhs_explicit(states: list[dolfinx.fem.Function],
         dolfinx.fem.petsc.assign(u, states)
         for state in states:
             state.x.scatter_forward()
+
+        # Update boundary conditions
+        for bc in updated_boundary_conditions:
+            bc.update(ts.getTime()) # Step, not stage time
 
         # Sequentially solve variable lifts
         for lift in lifts:
@@ -544,7 +550,12 @@ def ts_from_SemiDiscreteSystem(system: formulations.SemiDiscreteSystem,
             ))
         # Register system of equations within ts
         ts.setRHSFunction(
-            _get_rhs_explicit(states, equations, lifts),
+            _get_rhs_explicit(
+                states=states,
+                equations=equations,
+                lifts=lifts,
+                updated_boundary_conditions=system.updated_boundary_conditions
+            ),
             x.duplicate()
         )
     elif method == 'implicit':
