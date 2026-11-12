@@ -75,10 +75,11 @@ path = "tracer.bp"  # Output VTX/ADIOS2 path
 write-every = 3600  # Write a snapshot every N steps
 
 [[boundary-conditions]]
-meshtag_name = "boundary_name" # FEniCSx meshtag identifier
-type = "concentration" # Whether to fix iota, c, etc.
+marker = 1 # FEniCSx boundary identifier
+type = "dirichlet-c" # Whether to fix iota, c, etc.
 value = 1.0         # Fixed value in time
 # series = boundary_data.csv # Time series with columns t, c
+# function = "function_name" # Function from mesh bp
 
 # To add more boundary conditions, add another table with the same header
 # [[boundary-condition]]

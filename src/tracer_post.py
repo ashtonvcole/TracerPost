@@ -255,6 +255,7 @@ def main():
 
     inp, proj, ic = cfg.inputs, cfg.projection, cfg.initial_condition
     phys, ts, out = cfg.physics, cfg.time_stepping, cfg.output
+    bcs = cfg.boundary_conditions
 
     # Mesh and interpolation structures
     log.info('Reading mesh...')
@@ -354,6 +355,32 @@ def main():
             iota.x.array[:] = iota.x.array * h0
             iota.x.scatter_forward()
 
+        # Process boundary conditions
+        log.info('Processing boundary conditions')
+        facet_tags = adx.read_meshtags(inp.mesh, domain, 'boundary')
+        ds = ufl.Measure('ds', domain=domain, subdomain_data=facet_tags)
+        boundary_conditions = []
+        for bc in bcs:
+            if bc.type == 'dirichlet-c':
+                boundary_conditions.append(
+                    ft.bcs.DirichletCondition(
+                        marker=bc.marker,
+                        value=dx.fem.Constant(domain, bc.value) * ufl.max_value(
+                            elevation.v,
+                            dx.fem.Constant(domain, 0.0)
+                        )
+                    )
+                )
+            elif bc.type == 'dirichlet-iota':
+                boundary_conditions.append(
+                    ft.bcs.DirichletCondition(
+                        marker=bc.marker,
+                        value=dx.fem.Constant(domain, bc.value)
+                    )
+                )
+            else:
+                raise ValueError(f'Invalid boundary specification {bc.type} at marker {bc.marker}')
+
         # Conservation law and semi-discrete DG system
         log.info('Building system...')
         equation = ft.equations.get_advection(
@@ -364,18 +391,19 @@ def main():
         system = ft.formulations.SemiDiscreteSystem.using_DG(
             equation=equation,
             trace_function=ft.fluxes.fluxn_upwind_scalar,
-            boundary_state=ufl.max_value(elevation.v + dp, 0.0)  # iota_ext = c h, c = 1
+            boundary_conditions=boundary_conditions,
+            ds=ds
         )
-        solver = ft.solvers.TSSolver.from_SemiDiscreteSystem(system, 'explicit')
+        ts = ft.solvers.ts_from_SemiDiscreteSystem(system, 'explicit')
 
         # PETSc time stepper
         opts = PETSc.Options()
         opts['ts_ssp_type'] = ts.ssp_type
-        solver.ts.setType(PETSc.TS.Type.SSP)
-        solver.ts.setTime(0.0)
-        solver.ts.setTimeStep(ts.dt)
-        solver.ts.setMaxTime(ts.t_final)
-        solver.ts.setExactFinalTime(PETSc.TS.ExactFinalTime.MATCHSTEP)
+        ts.setType(PETSc.TS.Type.SSP)
+        ts.setTime(0.0)
+        ts.setTimeStep(ts.dt)
+        ts.setMaxTime(ts.t_final)
+        ts.setExactFinalTime(PETSc.TS.ExactFinalTime.MATCHSTEP)
 
         out_fields = [f for f in (iota, c if want_c else None)
                       if f is not None and f.name in out.fields]
@@ -395,17 +423,19 @@ def main():
                     c.x.array[wet] = iota.x.array[wet] / h[wet]
                     c.x.scatter_forward()
                 writer.write(tt)
-            solver.ts.setMonitor(monitor)
+            ts.setMonitor(monitor)
 
             def pre_step(ts_):
                 tt = ts_.getTime()
                 elevation.update(tt)
                 velocity.update(tt)
-            solver.ts.setPreStep(pre_step)
+            ts.setPreStep(pre_step)
 
-            solver.ts.setFromOptions()
+            ts.setFromOptions()
+
+            # Solution loop happens here
             log.info('Begin solve...')
-            solver.ts.solve(iota.x.petsc_vec)
+            ts.solve(iota.x.petsc_vec)
     finally:
         for b in (velocity_buffer, elevation_buffer):
             if b is not None:
