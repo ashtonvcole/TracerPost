@@ -591,10 +591,10 @@ class Mesh:
         """int: The number of nodes in the mesh."""
         return self._num_nodes
 
-        @property
-        def num_elements(self) -> int:
-            """int: The number of elements in the mesh."""
-            return self._num_elements
+    @property
+    def num_elements(self) -> int:
+        """int: The number of elements in the mesh."""
+        return self._num_elements
 
     @classmethod
     def from_ADCIRCMesh(cls, adcirc_mesh: ADCIRCMesh) -> 'Mesh':
