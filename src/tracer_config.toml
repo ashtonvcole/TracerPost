@@ -1,15 +1,18 @@
-# Template configuration file for a TracerPost salinity run.
+# Template configuration file for a TracerPost run.
 #
 # Usage: python tracer_post.py tracer_config.toml
 #
-# Keys use hyphens (underscores are also accepted). Relative paths are
-# resolved against the directory containing this file. Unknown sections or
-# keys are an error. Values shown are the defaults; keys marked REQUIRED have
-# no default.
+# The file is validated against tracer_config.schema.json (JSON Schema draft
+# 2020-12) when it is loaded, and every problem is reported at once. Keys use
+# hyphens (underscores are also accepted). Relative paths are resolved against
+# the directory containing this file. Unknown sections or keys are an error.
+# Values shown for optional keys are their defaults; keys marked REQUIRED have
+# no default. Keys marked "not implemented" raise NotImplementedError if set.
 
 [inputs]
-# Filtered mesh in adios4dolfinx format (.bp), in lon/lat degrees. Must also
-# contain the continuous P1 bathymetry (DP). REQUIRED
+# Filtered mesh in adios4dolfinx format (.bp), in lon/lat degrees. Must contain
+# the continuous P1 bathymetry (DP) and, if boundary conditions are given, the
+# boundary meshtags and name map named below. REQUIRED
 mesh = "path/to/mesh.bp"
 # Name of the continuous P1 bathymetry function (DP) in the mesh. Omit to use
 # the dolfinx default name (as written by adx.write_function without renaming).
@@ -22,6 +25,12 @@ interp-dir = "path/to/mesh/secondary_files"
 fort63 = "path/to/fort.63"
 # ADCIRC velocity time series (fort.64). REQUIRED
 fort64 = "path/to/fort.64"
+# Both series are taken as zero at t = 0 and interpolated linearly to the
+# first record. t-final must not exceed the last record time in either file.
+
+# Lookups in the mesh file for boundary conditions (read only if any are given)
+boundary-meshtag-name = "boundary"      # MeshTags object holding the facet markers
+boundary-meshtag-map = "boundary_tags"  # Attribute mapping boundary name -> marker
 
 [projection]
 # Carte Parallelogrammique Projection (CPP) parameters
@@ -30,33 +39,32 @@ cpp-lon = -94.5           # Reference longitude [deg]
 cpp-lat = 29.0            # Reference latitude [deg]
 
 [initial-condition]
-# Variable that the initial condition below specifies.
-# "iota": iota = c h is set directly
-# "c":    c is set, then converted via iota = c h with h = max(zeta + DP, 0)
-#         at t = 0 (requires bathymetry in the mesh, as always)
-# The gaussian amplitude, constant value, or "bp" function are all
-# interpreted as this variable.
+# Variable that the initial condition specifies:
+#   "iota": iota = c h is set directly
+#   "c":    c is set, then converted via iota = c h with h = max(zeta + DP, 0)
+#           at t = 0 (zeta is zero at t = 0, see [inputs])
+# The gaussian amplitude, constant value, or "bp" function are all interpreted
+# as this variable.
 variable = "iota"
 
-# "gaussian": Gaussian bump in iota
-# "constant": uniform iota = value
-# "bp":       read iota from an adios4dolfinx file (DG1 on the mesh)
+# Initial condition shape. Its parameters follow.
+#   "gaussian": Gaussian bump
+#   "constant": uniform value
+#   "bp":       read from an adios4dolfinx file (DG1 on the mesh)
 type = "gaussian"
-
-# type = "constant"
-value = 1.0
-
-# type = "bp"
-# File holding iota. Omit to read from [inputs] mesh.
-# bp = "path/to/iota.bp"
-# Name of the function in the file
-name = "iota"
 
 # type = "gaussian"
 lon = -97.0611      # Center longitude [deg]
 lat = 27.8339       # Center latitude [deg]
 radius = 2000.0     # Standard deviation [m]
-amplitude = 1.0     # Peak value of iota
+amplitude = 1.0     # Peak value
+
+# type = "constant"
+# value = 1.0       # Uniform value
+
+# type = "bp"
+# bp = "path/to/iota.bp"  # File holding the function. Omit to read from [inputs] mesh.
+# name = "iota"           # Name of the function in the file
 
 [physics]
 velocity-scale = 1.0  # Multiplier applied to the velocity field
@@ -72,16 +80,20 @@ ssp-type = "rks3"   # PETSc SSP Runge-Kutta type
 fields = ["iota"]
 h-min = 1e-3        # c is set to 0 where h < h-min [m]
 path = "tracer.bp"  # Output VTX/ADIOS2 path
-write-every = 3600  # Write a snapshot every N steps
+write-every = 3600  # Write a snapshot every N steps, starting with step 0
 
+# Boundary conditions: optional, one table per boundary. To add more, repeat
+# the [[boundary-conditions]] header. A Dirichlet condition applies where flow
+# enters the domain. Boundaries without a table are open to outflow and closed
+# to inflow.
 [[boundary-conditions]]
-marker = 1 # FEniCSx boundary identifier
-# name = "name"     # Alternatively, string identifier in the bp file
-type = "dirichlet-c" # Whether to fix iota, c, etc.
-value = 1.0         # Fixed value in time
-# series = "boundary_data.csv" # Time series with columns t, c
-# function = "function_name" # Function from mesh bp
-
-# To add more boundary conditions, add another table with the same header
-# [[boundary-conditions]]
-
+# Select the boundary by exactly one of marker or name.
+marker = 1                  # Integer marker in the mesh tags
+# name = "north"            # Name in the mesh's boundary name map
+# "dirichlet-c":    fix c, i.e. iota = c max(zeta + DP, 0)
+# "dirichlet-iota": fix iota
+type = "dirichlet-c"
+value = 1.0                 # Fixed value in time
+# Not implemented:
+# series = "boundary_data.csv"  # Time series with columns t, c
+# function = "function_name"    # Function from the mesh file

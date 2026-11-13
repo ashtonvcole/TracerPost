@@ -9,6 +9,7 @@ dependencies:
   - matplotlib
   - mpich
   - numpy
+  - jsonschema
   - pyvista
   - jupyterlab
   - imageio

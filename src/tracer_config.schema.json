@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TracerPost run configuration",
+  "description": "Schema for tracer_config.toml. Keys are hyphenated; underscores are accepted by the loader. Defaults are applied by the loader, not by the validator. Relative paths are resolved against the config file directory by the loader.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mesh", "interp-dir", "fort64", "fort63"],
+      "properties": {
+        "mesh": {
+          "type": "string",
+          "description": "Filtered mesh in adios4dolfinx format (.bp), in lon/lat degrees, containing the continuous P1 bathymetry."
+        },
+        "bathymetry-name": {
+          "type": "string",
+          "description": "Name of the continuous P1 bathymetry function in the mesh. Omit for the dolfinx default name."
+        },
+        "interp-dir": {
+          "type": "string",
+          "description": "Directory containing interp_coordinates.npy, interp_elements.npy, and interp_node_map.npy."
+        },
+        "fort64": {
+          "type": "string",
+          "description": "ADCIRC velocity time series."
+        },
+        "fort63": {
+          "type": "string",
+          "description": "ADCIRC elevation time series."
+        },
+        "boundary-meshtag-name": {
+          "type": "string",
+          "default": "boundary",
+          "description": "Name of the meshtag object for bonudary markers in the mesh file."
+        },
+        "boundary-meshtag-map": {
+          "type": "string",
+          "default": "boundary_tags",
+          "description": "Name of the mesh-file attribute mapping boundary names to marker integers."
+        }
+      }
+    },
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "radius-earth": {"type": "number", "default": 6378206.4},
+        "cpp-lon": {"type": "number", "default": -94.5},
+        "cpp-lat": {"type": "number", "default": 29.0}
+      }
+    },
+    "initial-condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "variable": {"enum": ["iota", "c"], "default": "iota"},
+        "type": {"enum": ["gaussian", "constant", "bp"], "default": "gaussian"},
+        "value": {"type": "number", "default": 1.0},
+        "bp": {"type": "string"},
+        "name": {"type": "string", "default": "iota"},
+        "lon": {"type": "number", "default": -97.0611},
+        "lat": {"type": "number", "default": 27.8339},
+        "radius": {"type": "number", "default": 2000.0},
+        "amplitude": {"type": "number", "default": 1.0}
+      }
+    },
+    "physics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "velocity-scale": {"type": "number", "default": 1.0},
+        "diffusivity": {
+          "type": "number",
+          "const": 0,
+          "default": 0.0,
+          "description": "Diffusion is not implemented; must be 0."
+        }
+      }
+    },
+    "time-stepping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t-final"],
+      "properties": {
+        "t-final": {"type": "number"},
+        "dt": {"type": "number", "default": 1.0},
+        "ssp-type": {"type": "string", "default": "rks3"}
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {"enum": ["iota", "c"]},
+          "minItems": 1,
+          "default": ["iota"]
+        },
+        "h-min": {"type": "number", "default": 0.001},
+        "path": {"type": "string", "default": "tracer.bp"},
+        "write-every": {"type": "integer", "default": 3600}
+      }
+    },
+    "boundary-conditions": {
+      "type": "array",
+      "default": [],
+      "description": "Zero or more [[boundary-conditions]] tables. A table selects its boundary by exactly one of marker or name.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "value"],
+        "oneOf": [
+          {"required": ["marker"]},
+          {"required": ["name"]}
+        ],
+        "properties": {
+          "marker": {"type": "integer"},
+          "name": {"type": "string"},
+          "type": {"enum": ["dirichlet-c", "dirichlet-iota"]},
+          "value": {"type": "number"},
+          "series":   {"type": "string", "x-unimplemented": "time series boundary data"},
+          "function": {"type": "string", "x-unimplemented": "boundary data from a mesh function"}
+        }
+      }
+    }
+  }
+}

@@ -16,11 +16,14 @@ Diffusion is not yet implemented.
 import adcircxtools as at
 import adios4dolfinx as adx
 import argparse
+import copy
 import dolfinx as dx
 import dolfinx.cpp.mesh
 import dolfinx.fem.petsc
 import dolfinx.io
 import fenicsxtools as ft
+import json
+import jsonschema
 import logging
 import matplotlib.tri
 from mpi4py import MPI
@@ -38,59 +41,78 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 
-# Configuration schema: {section: {key: (default, type)}}. A default of
-# REQUIRED means the key must be present. TOML has no null, so optional keys
-# with a default of None are simply omitted from the file.
-REQUIRED = object()
-SCHEMA = {
-    'inputs': {
-        'mesh': (REQUIRED, str),
-        'bathymetry_name': (None, str),
-        'interp_dir': (REQUIRED, str),
-        'fort64': (REQUIRED, str),
-        'fort63': (REQUIRED, str),
-    },
-    'projection': {
-        'radius_earth': (6378206.4, float),
-        'cpp_lon': (-94.5, float),
-        'cpp_lat': (29.0, float),
-    },
-    'initial_condition': {
-        'variable': ('iota', str),
-        'type': ('gaussian', str),
-        'value': (1.0, float),
-        'bp': (None, str),
-        'name': ('iota', str),
-        'lon': (-97.0611, float),
-        'lat': (27.8339, float),
-        'radius': (2000.0, float),
-        'amplitude': (1.0, float),
-    },
-    'physics': {
-        'velocity_scale': (1.0, float),
-        'diffusivity': (0.0, float),
-    },
-    'time_stepping': {
-        't_final': (REQUIRED, float),
-        'dt': (1.0, float),
-        'ssp_type': ('rks3', str),
-    },
-    'output': {
-        'fields': (['iota'], list),
-        'h_min': (1e-3, float),
-        'path': ('tracer.bp', str),
-        'write_every': (3600, int),
-    },
-}
-CHOICES = {
-    ('initial_condition', 'variable'): ('iota', 'c'),
-    ('initial_condition', 'type'): ('gaussian', 'constant', 'bp'),
-}
+# Run options are validated against a JSON Schema (draft 2020-12) stored next
+# to this script. The validator does not apply defaults, so _apply_defaults
+# fills them from the schema first. Optional keys without a default (e.g.
+# bathymetry-name) become None in the returned namespace.
+SCHEMA_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 'tracer_config.schema.json')
 # Relative paths in these keys are resolved against the config file directory
 PATH_KEYS = {
-    ('inputs', 'mesh'), ('inputs', 'interp_dir'), ('inputs', 'fort64'),
-    ('inputs', 'fort63'), ('initial_condition', 'bp'), ('output', 'path'),
+    ('inputs', 'mesh'), ('inputs', 'interp-dir'), ('inputs', 'fort64'),
+    ('inputs', 'fort63'), ('initial-condition', 'bp'), ('output', 'path'),
 }
+
+
+def _hyphenate(obj):
+    """Return obj with underscores in all dictionary keys changed to hyphens."""
+    if isinstance(obj, dict):
+        return {k.replace('_', '-'): _hyphenate(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_hyphenate(v) for v in obj]
+    return obj
+
+
+def _apply_defaults(instance: dict, schema: dict):
+    """Fill missing keys with schema defaults, in place. Objects missing
+    entirely are created empty so that their own defaults apply.
+    """
+    for key, sub in schema.get('properties', {}).items():
+        if key not in instance:
+            if 'default' in sub:
+                instance[key] = copy.deepcopy(sub['default'])
+            elif sub.get('type') == 'object':
+                instance[key] = {}
+        if isinstance(instance.get(key), dict):
+            _apply_defaults(instance[key], sub)
+
+
+def _to_namespace(instance: dict, schema: dict) -> SimpleNamespace:
+    """Convert a validated instance to nested namespaces with underscore
+    attribute names. Missing optional keys are None; ints are widened to
+    floats where the schema says number.
+    """
+    values = {}
+    for key, sub in schema['properties'].items():
+        val = instance.get(key)
+        if val is not None:
+            kind = sub.get('type')
+            if kind == 'object':
+                val = _to_namespace(val, sub)
+            elif kind == 'array' and sub['items'].get('type') == 'object':
+                val = [_to_namespace(v, sub['items']) for v in val]
+            elif kind == 'number':
+                val = float(val)
+            elif kind == 'integer':
+                val = int(val)
+        values[key.replace('-', '_')] = val
+    return SimpleNamespace(**values)
+
+
+def _find_unimplemented(instance, schema, path=()):
+    for key, sub in schema.get('properties', {}).items():
+        if key not in instance:
+            continue
+        here = path + (key,)
+        if 'x-unimplemented' in sub:
+            yield here, sub['x-unimplemented']
+        val = instance[key]
+        if isinstance(val, dict):
+            yield from _find_unimplemented(val, sub, here)
+        elif isinstance(val, list) and isinstance(sub.get('items'), dict):
+            for i, item in enumerate(val):
+                if isinstance(item, dict):
+                    yield from _find_unimplemented(item, sub['items'], here + (i,))
 
 
 def load_config(path: str) -> SimpleNamespace:
@@ -101,70 +123,45 @@ def load_config(path: str) -> SimpleNamespace:
 
     Returns:
         SimpleNamespace: Nested namespace, accessed as cfg.section.key, with
-            defaults filled in and relative paths resolved.
+            defaults filled in and relative paths resolved. Boundary
+            conditions are a list of namespaces, cfg.boundary_conditions.
 
     Raises:
-        ValueError: On unknown sections/keys, missing required keys, wrong
-            types, or invalid values.
+        ValueError: If the configuration does not satisfy the schema. All
+            violations are reported together.
     """
+    with open(SCHEMA_PATH) as f:
+        schema = json.load(f)
     with open(path, 'rb') as f:
         raw = tomllib.load(f)
-    # Config keys are written with hyphens (e.g. interp-dir); the schema and
-    # attribute names use underscores
-    raw = {s.replace('-', '_'): ({k.replace('-', '_'): v for k, v in d.items()}
-                                 if isinstance(d, dict) else d)
-           for s, d in raw.items()}
+    # Config keys are written with hyphens (e.g. interp-dir); underscores are
+    # also accepted
+    given = _hyphenate(raw)  # As written, before defaults are filled in
+    cfg = copy.deepcopy(given)
+    _apply_defaults(cfg, schema)
+
+    errors = sorted(
+        jsonschema.Draft202012Validator(schema).iter_errors(cfg),
+        key=lambda e: [str(p) for p in e.absolute_path])
+    if errors:
+        raise ValueError('invalid configuration:\n' + '\n'.join(
+            f"  {'/'.join(str(p) for p in e.absolute_path) or '<root>'}: "
+            f'{e.message}' for e in errors))
+
+    unimplemented = list(_find_unimplemented(given, schema))
+    if unimplemented:
+        raise NotImplementedError('not implemented yet:\n' + '\n'.join(
+            f"  {'/'.join(str(p) for p in path)}: {why}" for path, why in unimplemented))
+
     base = os.path.dirname(os.path.abspath(path))
+    for section, key in PATH_KEYS:
+        # Only paths given in the file are resolved; defaults stay as written
+        if key in given.get(section, {}):
+            # Expand ~; absolute paths pass through join unchanged
+            cfg[section][key] = os.path.normpath(
+                os.path.join(base, os.path.expanduser(cfg[section][key])))
 
-    unknown = set(raw) - set(SCHEMA)
-    if unknown:
-        raise ValueError(f'unknown config section(s): {sorted(unknown)}')
-
-    cfg = {}
-    for section, keys in SCHEMA.items():
-        given = raw.get(section, {})
-        unknown = set(given) - set(keys)
-        if unknown:
-            raise ValueError(
-                f'unknown key(s) in [{section}]: {sorted(unknown)}')
-        out = {}
-        for key, (default, typ) in keys.items():
-            if key not in given:
-                if default is REQUIRED:
-                    raise ValueError(f'missing required key [{section}] {key}')
-                out[key] = default
-                continue
-            val = given[key]
-            # Accept ints where floats are expected, but not bools
-            if typ is float and isinstance(val, int) \
-                    and not isinstance(val, bool):
-                val = float(val)
-            if not isinstance(val, typ) or (
-                    typ is not list and isinstance(val, bool)):
-                raise ValueError(
-                    f'[{section}] {key} must be {typ.__name__}, '
-                    f'got {type(val).__name__}')
-            if (section, key) in PATH_KEYS:
-                # Expand ~; absolute paths pass through join unchanged
-                val = os.path.normpath(
-                    os.path.join(base, os.path.expanduser(val)))
-            out[key] = val
-        cfg[section] = out
-
-    for (section, key), choices in CHOICES.items():
-        if cfg[section][key] not in choices:
-            raise ValueError(
-                f'[{section}] {key} must be one of {choices}, '
-                f'got {cfg[section][key]!r}')
-    fields = cfg['output']['fields']
-    if not fields or any(f not in ('iota', 'c') for f in fields):
-        raise ValueError("[output] fields must be a non-empty list of "
-                         "'iota' and/or 'c'")
-    if cfg['physics']['diffusivity'] != 0.0:
-        raise ValueError('diffusion is not implemented; '
-                         '[physics] diffusivity must be 0')
-
-    return SimpleNamespace(**{s: SimpleNamespace(**v) for s, v in cfg.items()})
+    return _to_namespace(cfg, schema)
 
 
 def setup_logging(comm, level=logging.INFO, all_ranks=False):
@@ -253,9 +250,14 @@ def main():
     log = setup_logging(comm=comm, level=logging.INFO, all_ranks=False)
     log.info('Starting Tracer Post salinity solver')
 
-    inp, proj, ic = cfg.inputs, cfg.projection, cfg.initial_condition
-    phys, ts, out = cfg.physics, cfg.time_stepping, cfg.output
-    bcs = cfg.boundary_conditions
+    # Shorthand for TOML sections
+    inp = cfg.inputs
+    proj = cfg.projection
+    icond = cfg.initial_condition
+    phys = cfg.physics
+    tstep = cfg.time_stepping
+    out = cfg.output
+    bconds = cfg.boundary_conditions
 
     # Mesh and interpolation structures
     log.info('Reading mesh...')
@@ -282,24 +284,24 @@ def main():
     kd = scipy.spatial.cKDTree(interp_coordinates)
 
     # Initial condition
-    x0, y0 = cpp(np.array([[ic.lon, ic.lat]]))[0, :2]
+    x0, y0 = cpp(np.array([[icond.lon, icond.lat]]))[0, :2]
     def iota0(x):
-        return ic.amplitude * np.exp(
-            -((x[0] - x0) ** 2 + (x[1] - y0) ** 2) / (2 * ic.radius ** 2))
+        return icond.amplitude * np.exp(
+            -((x[0] - x0) ** 2 + (x[1] - y0) ** 2) / (2 * icond.radius ** 2))
 
     # Function spaces
     log.info('Initializing tracer fields...')
     V = dx.fem.functionspace(domain, ('Discontinuous Lagrange', 1))
     W = dx.fem.functionspace(domain, ('Discontinuous Lagrange', 1, (domain.geometry.dim,)))
     iota = dx.fem.Function(V, name='iota')
-    if ic.type == 'gaussian':
+    if icond.type == 'gaussian':
         iota.interpolate(iota0)
-    elif ic.type == 'constant':
-        iota.x.array[:] = ic.value
+    elif icond.type == 'constant':
+        iota.x.array[:] = icond.value
     else:
         # First, check that function space matches
-        ic_file = ic.bp or inp.mesh
-        att = adx.read_attributes(ic_file, comm, f'{ic.name}_element')
+        ic_file = icond.bp or inp.mesh
+        att = adx.read_attributes(ic_file, comm, f'{icond.name}_element')
         el = V.ufl_element()
         expected_family = el.basix_element.family.value
         expected_degree = el.degree
@@ -318,7 +320,7 @@ def main():
                 f'expected degree {expected_degree}, found {found_degree}\n'
                 f'expected discontinuous {expected_discontinuous}, found {found_discontinuous}\n'
             )
-        adx.read_function(ic_file, iota, name=ic.name)
+        adx.read_function(ic_file, iota, name=icond.name)
     iota.x.scatter_forward()
 
     # Total depth h = zeta + DP is needed for the inflow boundary state
@@ -350,36 +352,43 @@ def main():
 
         # If the initial condition was specified as c, convert: iota = c h
         # with h = max(zeta + DP, 0) evaluated at t = 0
-        if ic.variable == 'c':
+        if icond.variable == 'c':
             h0 = np.maximum(elevation.v.x.array + dp.x.array, 0.0)
             iota.x.array[:] = iota.x.array * h0
             iota.x.scatter_forward()
 
         # Process boundary conditions
         log.info('Processing boundary conditions')
-        facet_tags = adx.read_meshtags(inp.mesh, domain, 'boundary')
-        ds = ufl.Measure('ds', domain=domain, subdomain_data=facet_tags)
         boundary_conditions = []
-        for bc in bcs:
-            if bc.type == 'dirichlet-c':
-                boundary_conditions.append(
-                    ft.bcs.DirichletCondition(
-                        marker=bc.marker,
-                        value=dx.fem.Constant(domain, bc.value) * ufl.max_value(
-                            elevation.v,
-                            dx.fem.Constant(domain, 0.0)
+        ds = None
+        if bconds:
+            facet_tags = adx.read_meshtags(inp.mesh, domain, inp.boundary_meshtag_name)
+            ds = ufl.Measure('ds', domain=domain, subdomain_data=facet_tags)
+            bcm = adx.read_attributes(inp.mesh, comm, inp.boundary_meshtag_map)
+            for bcond in bconds:
+                marker = (bcond.marker 
+                    if bcond.marker is not None
+                    else bcm[bcond.name][0]
+                )
+                if bcond.type == 'dirichlet-c':
+                    boundary_conditions.append(
+                        ft.bcs.DirichletCondition(
+                            tag=marker,
+                            value=dx.fem.Constant(domain, bcond.value) * ufl.max_value(
+                                elevation.v + dp,
+                                dx.fem.Constant(domain, 0.0)
+                            )
                         )
                     )
-                )
-            elif bc.type == 'dirichlet-iota':
-                boundary_conditions.append(
-                    ft.bcs.DirichletCondition(
-                        marker=bc.marker,
-                        value=dx.fem.Constant(domain, bc.value)
+                elif bcond.type == 'dirichlet-iota':
+                    boundary_conditions.append(
+                        ft.bcs.DirichletCondition(
+                            tag=marker,
+                            value=dx.fem.Constant(domain, bcond.value)
+                        )
                     )
-                )
-            else:
-                raise ValueError(f'Invalid boundary specification {bc.type} at marker {bc.marker}')
+                else:
+                    raise ValueError(f'Invalid boundary specification {bcond.type} at marker {bcond.marker}')
 
         # Conservation law and semi-discrete DG system
         log.info('Building system...')
@@ -390,7 +399,7 @@ def main():
         )
         system = ft.formulations.SemiDiscreteSystem.using_DG(
             equation=equation,
-            trace_function=ft.fluxes.fluxn_upwind_scalar,
+            trace_function=ft.fluxes.llf,
             boundary_conditions=boundary_conditions,
             ds=ds
         )
@@ -398,11 +407,11 @@ def main():
 
         # PETSc time stepper
         opts = PETSc.Options()
-        opts['ts_ssp_type'] = ts.ssp_type
+        opts['ts_ssp_type'] = tstep.ssp_type
         ts.setType(PETSc.TS.Type.SSP)
         ts.setTime(0.0)
-        ts.setTimeStep(ts.dt)
-        ts.setMaxTime(ts.t_final)
+        ts.setTimeStep(tstep.dt)
+        ts.setMaxTime(tstep.t_final)
         ts.setExactFinalTime(PETSc.TS.ExactFinalTime.MATCHSTEP)
 
         out_fields = [f for f in (iota, c if want_c else None)
@@ -410,7 +419,7 @@ def main():
         with dx.io.VTXWriter(comm, out.path, out_fields,
                              engine='BP4') as writer:
             def monitor(ts_, step, tt, uu):
-                if step % out.write_every != 0:
+                if step % out.write_every != 0 and not ts_.getConvergedReason():
                     return
                 log.info(f'writing step {step} at time {tt}')
                 dx.fem.petsc.assign(uu, iota)
