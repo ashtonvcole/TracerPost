@@ -657,7 +657,7 @@ class Mesh:
         node_indices = numpy.cumsum(mask_nodes) - 1 # Renumbering
         node_indices[~mask_nodes] = -1
         filtered_elements = node_indices[filtered_elements]
-        element_indices = numpy.cumsum(mask_elements_in_filter) # Renumbering
+        element_indices = numpy.cumsum(mask_elements_in_filter) - 1 # Renumbering
         element_indices[~mask_elements_in_filter] = -1
 
         # Construct a new object from the result
