@@ -1,0 +1,16 @@
+name: tracer-post-env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - fenics-dolfinx=0.11.0
+  - adios2
+  - c-compiler # Generic
+  - scipy
+  - mpich
+  - numpy
+  - jsonschema
+  - pip
+  - pip:
+      - adios4dolfinx==0.11.0
+      - -e .
