@@ -9,6 +9,7 @@ dependencies:
   - scipy
   - mpich
   - numpy
+  - matplotlib
   - jsonschema
   - pip
   - pip:
